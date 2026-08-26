@@ -131,6 +131,31 @@ before slot 0. That makes "the last card placed in a column" always land
 at index 4, so the rules can hard-code "index 4 is face-down" instead of
 tracking placement order separately.
 
+### Reads can't span children with different access outcomes
+
+A real bug from early testing, worth documenting so it doesn't recur: RTDB
+security rules aren't a filter. If a single read or listen touches several
+child paths and even one of them evaluates to denied, the *entire* read
+fails — it doesn't come back with the accessible parts and the denied
+parts simply omitted. `rooms/{roomId}` as a whole is exactly this kind of
+path: `meta` is open to any authenticated user, `players` is open to any
+room member, but `private/{uid}` is open only to that specific uid (or
+everyone, post-showdown) — three different rules with three different
+outcomes for the same reader. A client that isn't a room member yet
+(mid-join) or a member reading pre-showdown (when the opponent's
+`private/*` has real data but is still denied to them) will have that one
+broad read fail outright, masking as a generic permission error even
+though the part they actually needed (`meta`, to check the room exists) is
+individually readable.
+
+The fix: never listen or read broadly at `rooms/{roomId}`. Each of `meta`,
+`players`, and each `private/{uid}` gets its own separate listener
+(`useOnlineGameStore.js`), and their snapshots are merged into one object
+client-side. Each of those three has a *uniform* access outcome across its
+own subtree for a given reader (doesn't depend on which specific child is
+being touched), which is what makes reading each of them broadly, on its
+own, safe.
+
 ---
 
 ## Firestore

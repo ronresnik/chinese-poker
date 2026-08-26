@@ -15,7 +15,7 @@ Being built step by step:
 
 1. ✅ Project structure, dependencies, Firebase config
 2. ✅ Database schema & Firebase Security Rules
-3. ⬜ Game logic, state management, scoring, AI Coach
+3. ✅ Game logic, state management, scoring, AI Coach
 4. ⬜ UI components (Lobby, Board, Animations)
 5. ⬜ GitHub Pages deployment
 
@@ -47,7 +47,23 @@ src/
 npm install
 cp .env.example .env.local   # fill in your Firebase project config
 npm run dev
+npm test                     # runs src/game/'s unit test suite (Node's built-in test runner)
 ```
+
+## Game logic
+
+`src/game/` is pure, framework-free, and fully unit tested (43 tests —
+hand evaluation, the 3-2 / 4-1 / 5-0(x2) payout math, a full simulated
+game with card-conservation checks, and the AI Coach heuristics). See
+[`src/game/README.md`](src/game/README.md) for the module map and the
+exact turn-flow math the custom 5-column rules imply.
+
+`src/store/` wires that logic to React: `useLocalGameStore` drives
+single-player vs. the bot end-to-end (no Firebase involved), while
+`useOnlineGameStore` + `src/firebase/rooms.js` implement real-time online
+play against the Step 2 schema/rules. The online store hasn't been
+exercised against a live Firebase project yet (only build-verified) — treat
+it as a solid first pass to smoke-test once Step 4 wires up real UI.
 
 ## Firebase schema & security rules
 

@@ -17,7 +17,7 @@ Being built step by step:
 2. ✅ Database schema & Firebase Security Rules
 3. ✅ Game logic, state management, scoring, AI Coach
 4. ✅ UI components (Lobby, Board, Animations)
-5. ⬜ GitHub Pages deployment
+5. ✅ GitHub Pages deployment
 
 ## Tech stack
 
@@ -106,5 +106,15 @@ npx firebase-tools deploy --only firestore:rules,firestore:indexes,database
 
 ## Deploy
 
-Full deployment instructions (GitHub Pages) land in Step 5, once the game
-itself is built.
+See [`docs/deployment.md`](docs/deployment.md) for the full walkthrough
+(repository secrets, enabling Pages, troubleshooting). Short version:
+
+1. Add the 7 `VITE_FIREBASE_*` values as GitHub repository secrets
+   (Settings -> Secrets and variables -> Actions).
+2. Settings -> Pages -> Source: **GitHub Actions**.
+3. Push to `main` (or merge a PR into it) — `.github/workflows/deploy.yml`
+   runs the test suite, builds, and publishes automatically. The live site
+   ends up at `https://<you>.github.io/chinese-poker/`.
+
+A manual alternative (`npm run deploy`, via the `gh-pages` package) is
+also available — see the docs page for when you'd use that instead.

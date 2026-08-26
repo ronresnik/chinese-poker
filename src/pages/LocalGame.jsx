@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useLocalGameStore, HUMAN_UID, BOT_UID } from '../store/useLocalGameStore.js'
 import { getCurrentTurnUid, getNextCard, PHASE } from '../game/engine.js'
+import { maskHiddenRow } from '../game/board.js'
 import GameScreen from '../components/GameScreen.jsx'
 
 export default function LocalGame() {
@@ -36,6 +37,12 @@ export default function LocalGame() {
 
   const isMyTurn = state.status === PHASE.PLACING && getCurrentTurnUid(state) === HUMAN_UID
   const nextCard = isMyTurn ? getNextCard(state) : null
+  // The bot's board object always holds its true hidden card (the local
+  // engine has no network boundary to keep it off this client) — mask it
+  // until the game reaches COMPLETE, when ShowdownReveal takes over and
+  // needs the real values to animate the column-by-column reveal.
+  const revealed = state.status === PHASE.COMPLETE
+  const opponentBoard = revealed ? state.players[BOT_UID].board : maskHiddenRow(state.players[BOT_UID].board)
 
   return (
     <GameScreen
@@ -44,7 +51,7 @@ export default function LocalGame() {
       myName={state.players[HUMAN_UID].name}
       opponentName={state.players[BOT_UID].name}
       myBoard={state.players[HUMAN_UID].board}
-      opponentBoard={state.players[BOT_UID].board}
+      opponentBoard={opponentBoard}
       isMyTurn={isMyTurn}
       cashGame={state.cashGame}
       nextCard={nextCard}

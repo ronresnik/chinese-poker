@@ -56,6 +56,21 @@ export function getColumnCards(board, col) {
   return board[col]
 }
 
+// Strips a board's hidden-row card back down to {faceDown:true} with no
+// rank/suit. Unlike the online path (whose public RTDB writes never
+// include the hidden card's rank/suit in the first place — see
+// firebase/rooms.js), a local single-player `state` object always holds
+// both players' true cards, since the engine needs them for scoring. Any
+// UI that shows the *opponent's* board before showdown must pass it
+// through this first, or it leaks the bot's final card early.
+export function maskHiddenRow(board) {
+  const masked = {}
+  for (const col of COLUMNS) {
+    masked[col] = board[col].map((card, idx) => (idx === HIDDEN_ROW_INDEX ? { faceDown: true } : card))
+  }
+  return masked
+}
+
 export function replaceHiddenCard(board, col, newCard) {
   const existing = board[col]
   if (existing.length !== COLUMN_SIZE) {

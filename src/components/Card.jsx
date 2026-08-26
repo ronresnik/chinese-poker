@@ -57,9 +57,20 @@ export default function Card({ card, size = 'md', empty = false, highlight = fal
         className,
       )}
     >
-      <span className="leading-none">{card.rank}</span>
+      {/* Corner pips (rank + suit together) rather than rank alone: in a
+          stacked column (ColumnStack) only a thin top strip of a covered
+          card stays visible, and the old lone-rank top span left the suit
+          hidden under the next card — pairing them here is what makes a
+          stacked card's suit/color readable without fanning it out. */}
+      <span className="flex items-center gap-0.5 leading-none">
+        <span>{card.rank}</span>
+        <span>{SUIT_SYMBOL[card.suit]}</span>
+      </span>
       <span className="self-center text-base leading-none sm:text-xl">{SUIT_SYMBOL[card.suit]}</span>
-      <span className="self-end leading-none">{card.rank}</span>
+      <span className="flex rotate-180 items-center gap-0.5 self-end leading-none">
+        <span>{card.rank}</span>
+        <span>{SUIT_SYMBOL[card.suit]}</span>
+      </span>
     </div>
   )
 }

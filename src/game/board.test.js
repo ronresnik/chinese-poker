@@ -9,6 +9,7 @@ import {
   openColumnsForPlacement,
   dealInitialRow,
   replaceHiddenCard,
+  maskHiddenRow,
   COLUMNS,
 } from './board.js'
 
@@ -102,4 +103,22 @@ test('replaceHiddenCard swaps the face-down card and returns the discard', () =>
   assert.deepEqual(discarded, { rank: 'A', suit: 'h' })
   assert.equal(updated.col1[4].rank, 'K')
   assert.equal(updated.col1[4].faceDown, true)
+})
+
+test('maskHiddenRow strips rank/suit from every column\'s row-4 card, leaves rows 0-3 untouched', () => {
+  let board = createEmptyBoard()
+  for (const col of COLUMNS) {
+    for (let i = 0; i < 5; i++) board = placeCard(board, col, c(`${2 + i}s`))
+  }
+
+  const masked = maskHiddenRow(board)
+  for (const col of COLUMNS) {
+    assert.deepEqual(
+      masked[col].slice(0, 4),
+      board[col].slice(0, 4),
+    )
+    assert.deepEqual(masked[col][4], { faceDown: true })
+    assert.equal(masked[col][4].rank, undefined)
+    assert.equal(masked[col][4].suit, undefined)
+  }
 })

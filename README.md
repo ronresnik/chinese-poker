@@ -16,7 +16,7 @@ Being built step by step:
 1. ✅ Project structure, dependencies, Firebase config
 2. ✅ Database schema & Firebase Security Rules
 3. ✅ Game logic, state management, scoring, AI Coach
-4. ⬜ UI components (Lobby, Board, Animations)
+4. ✅ UI components (Lobby, Board, Animations)
 5. ⬜ GitHub Pages deployment
 
 ## Tech stack
@@ -32,8 +32,8 @@ Being built step by step:
 
 ```
 src/
-  components/   shared UI components
-  pages/        route-level pages (Home/Lobby, Game, Leaderboard)
+  components/   shared UI (Card, board, showdown modal, coach tip toast…)
+  pages/        route-level pages (Home, LocalGame, OnlineGame, Leaderboard)
   game/         pure game logic — deck, hand eval, rules, scoring, AI bot
   firebase/     Firebase SDK initialization & data access helpers
   store/        Zustand stores wiring game/ + firebase/ to React
@@ -61,9 +61,34 @@ exact turn-flow math the custom 5-column rules imply.
 `src/store/` wires that logic to React: `useLocalGameStore` drives
 single-player vs. the bot end-to-end (no Firebase involved), while
 `useOnlineGameStore` + `src/firebase/rooms.js` implement real-time online
-play against the Step 2 schema/rules. The online store hasn't been
-exercised against a live Firebase project yet (only build-verified) — treat
-it as a solid first pass to smoke-test once Step 4 wires up real UI.
+play against the Step 2 schema/rules.
+
+## UI
+
+Mobile-first (5 tappable, overlapping-card columns fit comfortably on a
+phone screen), dark casino theme, tap-to-place — no drag-and-drop, which
+is more reliable on touch and still snappy. `GameScreen` is one shared
+component driving both single-player and online play, since both stores
+converge on the same board shape (see `src/game/README.md`). The 3-D
+"losing columns fold forward" showdown treatment and the AI Coach's
+tip toast are both implemented and were exercised live (see below).
+
+**Live-verified in a real headless browser (Playwright against the Vite
+dev server), single-player end to end** — full game from deal through a
+30+ turn placement phase, the swap step, and the showdown modal, zero
+console errors; the Leaderboard route degrades gracefully when Firestore
+is unreachable. That run caught and fixed two real bugs: a "Connecting…"
+button that never recovered on an auth failure, and the AI Coach's tip
+toast getting yanked away by the bot's very next move instead of showing
+for its intended duration.
+
+**Not live-verified: online multiplayer.** This sandbox's network policy
+explicitly does not support WebSocket upgrades through its proxy, and the
+Realtime Database transport online play depends on is WebSocket-based —
+so this is a hard environment limitation, not something more testing here
+would fix. The online store's logic was carefully reasoned through in
+Step 3 and bundles cleanly, but treat it as unexercised against a live
+Firebase project until it's tried on a network without that restriction.
 
 ## Firebase schema & security rules
 

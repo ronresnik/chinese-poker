@@ -177,7 +177,7 @@ export const useOnlineGameStore = create((set, get) => ({
   },
 
   async place(col) {
-    const { room, roomId, myUid, opponentUid, myBoard, myPrivate } = get()
+    const { room, roomId, myUid, opponentUid, myBoard } = get()
     if (!room || room.meta.status !== 'placing' || room.meta.turnUid !== myUid) return
     const card = get().nextCardToPlace()
     if (!card) return

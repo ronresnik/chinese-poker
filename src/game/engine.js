@@ -67,6 +67,12 @@ export function getCurrentTurnUid(state) {
   return state.status === PHASE.PLACING ? state.order[state.turnIndex % 2] : null
 }
 
+/** The card `uid` would place next, without mutating state — for UI display. */
+export function getNextCard(state, uid) {
+  const player = state.players[uid]
+  return player.hand.length > 0 ? player.hand[0] : state.deck[0]
+}
+
 export function placeCard(state, uid, col) {
   if (state.status !== PHASE.PLACING) throw new Error('Not in the placement phase')
   if (getCurrentTurnUid(state) !== uid) throw new Error(`It is not ${uid}'s turn`)

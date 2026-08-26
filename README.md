@@ -14,7 +14,7 @@ CSS, deployed as a static site to GitHub Pages, backed by Firebase
 Being built step by step:
 
 1. ✅ Project structure, dependencies, Firebase config
-2. ⬜ Database schema & Firebase Security Rules
+2. ✅ Database schema & Firebase Security Rules
 3. ⬜ Game logic, state management, scoring, AI Coach
 4. ⬜ UI components (Lobby, Board, Animations)
 5. ⬜ GitHub Pages deployment
@@ -49,6 +49,21 @@ cp .env.example .env.local   # fill in your Firebase project config
 npm run dev
 ```
 
+## Firebase schema & security rules
+
+See [`docs/firebase-schema.md`](docs/firebase-schema.md) for the full
+Firestore + Realtime Database data model, the game's state machine, and —
+important — the trust model: what these rules cryptographically guarantee
+on a free-tier (no Cloud Functions) setup, and what they explicitly don't.
+
+To deploy the rules to your Firebase project:
+
+```bash
+npx firebase-tools login
+npx firebase-tools deploy --only firestore:rules,firestore:indexes,database
+```
+
 ## Deploy
 
-Deployment instructions land in Step 5, once the game itself is built.
+Full deployment instructions (GitHub Pages) land in Step 5, once the game
+itself is built.

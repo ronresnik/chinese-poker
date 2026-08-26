@@ -1,0 +1,67 @@
+rules_version = '2';
+
+// See docs/firebase-schema.md for the full data model and the trust-model
+// notes explaining exactly what these rules do and don't guarantee on a
+// free-tier, serverless (no Cloud Functions) architecture.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Public player profile + aggregate stats. Readable by anyone — needed
+    // for the leaderboard and for showing opponent names in a room.
+    // Writable only by the owner, and only in ways that can't be used to
+    // fabricate a win: stats may only move forward by at most one game per
+    // write, and any gamesWon increment must cite a real, matching `games`
+    // record (see the games collection below).
+    match /users/{uid} {
+      allow read: if true;
+
+      allow create: if isOwner(uid)
+        && request.resource.data.uid == uid
+        && request.resource.data.stats.gamesPlayed == 0
+        && request.resource.data.stats.gamesWon == 0
+        && request.resource.data.stats.gamesLost == 0;
+
+      allow update: if isOwner(uid)
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.stats.gamesPlayed >= resource.data.stats.gamesPlayed
+        && request.resource.data.stats.gamesPlayed <= resource.data.stats.gamesPlayed + 1
+        && request.resource.data.stats.gamesWon >= resource.data.stats.gamesWon
+        && request.resource.data.stats.gamesWon <= resource.data.stats.gamesWon + 1
+        && request.resource.data.stats.gamesLost >= resource.data.stats.gamesLost
+        && request.resource.data.stats.gamesLost <= resource.data.stats.gamesLost + 1
+        && (
+          request.resource.data.stats.gamesWon == resource.data.stats.gamesWon
+          || (
+            request.resource.data.lastGameId is string
+            && get(/databases/$(database)/documents/games/$(request.resource.data.lastGameId)).data.winnerUid == uid
+            && uid in get(/databases/$(database)/documents/games/$(request.resource.data.lastGameId)).data.players
+          )
+        );
+
+      allow delete: if false;
+    }
+
+    // Immutable, append-only match history — the audit trail behind
+    // leaderboard updates above. Created once at showdown by one of the
+    // two participants; never edited or deleted afterward.
+    match /games/{gameId} {
+      allow read: if isSignedIn();
+
+      allow create: if isSignedIn()
+        && request.auth.uid in request.resource.data.players
+        && request.resource.data.players.size() == 2
+        && request.resource.data.winnerUid in request.resource.data.players;
+
+      allow update, delete: if false;
+    }
+  }
+}

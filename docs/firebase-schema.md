@@ -24,7 +24,7 @@ client-side state (see `src/game/`).
 
 ```
 rooms/{roomId}/
-  meta/
+  meta/                               -- readable by ANY authenticated user (see below)
     hostUid                string   — creator of the room; also the dealer (see Trust model)
     guestUid                string   — set once a second player joins
     status                  enum     — "waiting" | "dealing" | "placing" | "swap" | "showdown" | "complete"
@@ -171,6 +171,19 @@ hidden in the UI):
    require both real participant UIDs. A client can't fabricate a win out
    of thin air; it can still, at most, lie about the *outcome* of a game it
    genuinely played (see below).
+
+`meta/{roomId}` is readable by **any authenticated user**, not just that
+room's members — this was tightened-then-loosened during development: an
+earlier version restricted it to members only, which broke joining outright
+(a prospective joiner isn't a member *yet*, and has to be able to check
+"does this room exist, is it full?" before they can become one). This
+doesn't leak anything sensitive — `meta` never holds card data, only
+status/turn/cash-game info — and a room ID is itself an unguessable,
+out-of-band-shared token (the whole point of "share this code with your
+opponent"), so being able to read a room's meta without already being a
+member is no more exposed than the room code itself already is. Card data
+(`private/{uid}`) keeps its strict membership-plus-showdown-gated read rule
+unchanged.
 
 Two things are **explicitly not guaranteed**, because they'd require a
 trusted server (a paid Cloud Functions plan) to referee:

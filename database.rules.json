@@ -7,7 +7,7 @@
       "$roomId": {
 
         "meta": {
-          ".read": "auth != null && (root.child('rooms').child($roomId).child('meta/hostUid').val() === auth.uid || root.child('rooms').child($roomId).child('meta/guestUid').val() === auth.uid)",
+          ".read": "auth != null",
 
           "hostUid": {
             ".write": "auth != null && !data.exists()",

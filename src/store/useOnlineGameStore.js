@@ -283,7 +283,19 @@ export const useOnlineGameStore = create((set, get) => ({
       )
     }
 
-    if (room.meta.status === 'showdown') {
+    // Checks 'complete' too, not just 'showdown': the two clients compute
+    // their own `result` independently and race to write meta/status ->
+    // 'complete' (see _maybeFinalizeShowdown). If the OTHER client wins
+    // that race before this one's own board data has finished merging,
+    // this client's meta listener delivers 'complete' directly, having
+    // skipped 'showdown' — and with only 'showdown' checked here, this
+    // client would never call _maybeFinalizeShowdown again. It'd sit
+    // forever with a fully-revealed board (the private-data subscribe
+    // above is keyed on 'showdown' || 'complete', so that part still
+    // arrives) but no computed result, and neither ShowdownReveal nor
+    // ShowdownModal has anything to render — a permanent deadlock on the
+    // "Showdown!" screen. This was a real, reported bug, not a hypothetical.
+    if (room.meta.status === 'showdown' || room.meta.status === 'complete') {
       get()._maybeFinalizeShowdown()
     }
   },
@@ -318,8 +330,12 @@ export const useOnlineGameStore = create((set, get) => ({
     // This is what actually completes the reveal once showdown opens the
     // read rule — _onRoomChange already tried once when status flipped,
     // but the opponent's data almost always lands in a later, separate
-    // callback.
-    if (get().room?.meta?.status === 'showdown') get()._maybeFinalizeShowdown()
+    // callback. Checks 'complete' too, for the same race described in
+    // _onRoomChange above: this client's meta status may already read
+    // 'complete' (written by the other, faster client) by the time this
+    // opponent-private data finally lands.
+    const metaStatus = get().room?.meta?.status
+    if (metaStatus === 'showdown' || metaStatus === 'complete') get()._maybeFinalizeShowdown()
   },
 
   nextCardToPlace() {

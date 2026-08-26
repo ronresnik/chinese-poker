@@ -1,7 +1,8 @@
-import { RANKS } from './deck.js'
+import { RANKS, SUITS } from './deck.js'
 import { COLUMNS } from './board.js'
 
 export const COPIES_PER_RANK = 4
+export const COPIES_PER_SUIT = 13
 export const DECK_SIZE = 52
 
 /**
@@ -27,16 +28,25 @@ export const DECK_SIZE = 52
  * are reported separately as `unknownOnTable` so the UI can say plainly
  * how much of the unseen pool is already committed face-down rather than
  * still to come. That number is what makes the count "dynamic" during
- * the last row: the per-rank figures stop moving for the opponent's
- * cards while `unknownOnTable` climbs to five.
+ * the last row: the per-rank AND per-suit figures stop moving for the
+ * opponent's hidden cards while `unknownOnTable` climbs to five.
+ *
+ * The suit tally (`remainingBySuit`/`seenBySuit`) follows the identical
+ * rule for the identical reason: a card in the opponent's face-down last
+ * row has an unknown suit exactly as much as it has an unknown rank, so
+ * it's excluded from both tallies the same way, via the same `see()`
+ * call below (rank and suit are only ever counted together, from the
+ * same real card).
  */
 export function countRemaining({ myBoard, opponentBoard, knownCards = [] } = {}) {
   const seen = Object.fromEntries(RANKS.map((r) => [r, 0]))
+  const seenBySuit = Object.fromEntries(SUITS.map((s) => [s, 0]))
   let seenTotal = 0
 
   const see = (card) => {
-    if (!card?.rank || seen[card.rank] === undefined) return
-    seen[card.rank] += 1
+    if (!card?.rank || !card?.suit) return
+    if (seen[card.rank] !== undefined) seen[card.rank] += 1
+    if (seenBySuit[card.suit] !== undefined) seenBySuit[card.suit] += 1
     seenTotal += 1
   }
 
@@ -57,5 +67,14 @@ export function countRemaining({ myBoard, opponentBoard, knownCards = [] } = {})
   }
 
   const remaining = Object.fromEntries(RANKS.map((r) => [r, COPIES_PER_RANK - seen[r]]))
-  return { remaining, seen, seenTotal, unknownOnTable, unseenTotal: DECK_SIZE - seenTotal }
+  const remainingBySuit = Object.fromEntries(SUITS.map((s) => [s, COPIES_PER_SUIT - seenBySuit[s]]))
+  return {
+    remaining,
+    seen,
+    remainingBySuit,
+    seenBySuit,
+    seenTotal,
+    unknownOnTable,
+    unseenTotal: DECK_SIZE - seenTotal,
+  }
 }

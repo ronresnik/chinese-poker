@@ -122,10 +122,21 @@ export default function GameScreen({
 
       <div className="text-center text-sm font-medium text-white/70">{myName} (you)</div>
 
-      {(isPlacing || isSwap) && (
+      {/* Rendered for the whole game, not just placing/swap: both players
+          derive this purely from their own local state (see
+          game/cardCounting.js), so at any given moment they'd already see
+          identical *kinds* of numbers — gating it to specific phases just
+          meant whichever player reached the next phase first stopped
+          seeing it while the other still could, which read as "only one
+          of us has this." Hidden only once the final summary modal is up,
+          since that panel already shows everything by then. Uses
+          displayOpponentBoard (masked pre-reveal, same as the board above
+          it) rather than the raw prop, so the count itself can't tip off
+          a rank/suit as exhausted before the official reveal shows it. */}
+      {!(isDone && revealDone) && (
         <CardCounter
           myBoard={myBoard}
-          opponentBoard={opponentBoard}
+          opponentBoard={displayOpponentBoard}
           // Cards this player has been shown but that aren't on a board
           // yet. The spare swap card only counts from the swap phase, as
           // that's when they're actually shown it — counting it earlier

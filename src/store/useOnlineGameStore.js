@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 // Aliased: zustand's own `create((set, get) => ...)` parameters below would
 // otherwise shadow these names throughout the store body.
-import { ref, get as fbGet, onValue } from 'firebase/database'
+import { ref, onValue } from 'firebase/database'
 import { rtdb } from '../firebase/config.js'
 import {
   newRoomId,
@@ -13,7 +13,9 @@ import {
   placeCardOnline,
   chooseSwapOnline,
   markComplete,
-  subscribeRoom,
+  subscribeMeta,
+  subscribePlayers,
+  fetchMetaOnce,
 } from '../firebase/rooms.js'
 import { COLUMNS, HIDDEN_ROW_INDEX, openColumnsForPlacement } from '../game/board.js'
 import { coachTipForPlacement, coachTipForSwap } from '../game/aiCoach.js'
@@ -68,7 +70,7 @@ const initialState = {
   opponentUid: null,
   isHost: false,
   status: 'idle', // idle | waiting | dealing | placing | swap | showdown | complete | error
-  room: null, // last raw snapshot from RTDB
+  room: null, // { meta, players } reconstructed from the two separate listeners below
   myPrivate: null,
   opponentPrivate: null, // only populated once readable (showdown/complete)
   cashGame: null,
@@ -80,7 +82,17 @@ const initialState = {
   error: null,
 }
 
-let roomUnsub = null
+// meta and players are subscribed separately (see firebase/rooms.js for
+// why: RTDB rules aren't a filter, so a single listen touching both an
+// accessible child and an inaccessible one — e.g. the old one-shot
+// rooms/{roomId} read hitting private/{opponentUid} pre-showdown — fails
+// in its entirety, not just the denied part). Their latest snapshots are
+// merged here into the same {meta, players} shape the rest of this file
+// already expects, so only the subscription plumbing changes.
+let latestMeta = null
+let latestPlayers = null
+let metaUnsub = null
+let playersUnsub = null
 let privateUnsub = null
 let opponentPrivateUnsub = null
 let dealTriggered = false
@@ -98,26 +110,36 @@ export const useOnlineGameStore = create((set, get) => ({
   },
 
   async joinGame({ roomId, uid, name }) {
-    const roomSnap = await fetchRoomOnce(roomId)
-    if (!roomSnap?.meta?.hostUid) throw new Error('Room not found')
-    if (roomSnap.meta.guestUid) throw new Error('Room is already full')
+    const meta = await fetchMetaOnce(roomId)
+    if (!meta?.hostUid) throw new Error('Room not found')
+    if (meta.guestUid) throw new Error('Room is already full')
     await joinRoom({ roomId, guestUid: uid, guestName: name })
     get()._attach({ roomId, uid, name, isHost: false })
   },
 
   _attach({ roomId, uid, name, isHost }) {
     get().leave()
+    latestMeta = null
+    latestPlayers = null
     dealTriggered = false
     initialBoardTriggered = false
     completeHandled = false
     set({ ...initialState, roomId, myUid: uid, myName: name, isHost, status: 'waiting' })
 
-    roomUnsub = subscribeRoom(roomId, (room) => get()._onRoom(room))
+    metaUnsub = subscribeMeta(roomId, (meta) => {
+      latestMeta = meta
+      get()._onRoomChange()
+    })
+    playersUnsub = subscribePlayers(roomId, (players) => {
+      latestPlayers = players
+      get()._onRoomChange()
+    })
     privateUnsub = onValue(ref(rtdb, `rooms/${roomId}/private/${uid}`), (snap) => get()._onMyPrivate(snap.val()))
   },
 
-  _onRoom(room) {
-    if (!room) return
+  _onRoomChange() {
+    if (!latestMeta) return
+    const room = { meta: latestMeta, players: latestPlayers ?? {} }
     const { myUid, isHost } = get()
     const opponentUid = room.meta.hostUid === myUid ? room.meta.guestUid : room.meta.hostUid
 
@@ -180,8 +202,9 @@ export const useOnlineGameStore = create((set, get) => ({
   _onOpponentPrivate(priv) {
     set({ opponentPrivate: priv, opponentBoard: mergeHidden(get().opponentBoard ?? normalizeBoard(), priv?.hiddenCardByCol) })
     // This is what actually completes the reveal once showdown opens the
-    // read rule — _onRoom already tried once when status flipped, but the
-    // opponent's data almost always lands in a later, separate callback.
+    // read rule — _onRoomChange already tried once when status flipped,
+    // but the opponent's data almost always lands in a later, separate
+    // callback.
     if (get().room?.meta?.status === 'showdown') get()._maybeFinalizeShowdown()
   },
 
@@ -264,15 +287,11 @@ export const useOnlineGameStore = create((set, get) => ({
   },
 
   leave() {
-    if (roomUnsub) roomUnsub()
+    if (metaUnsub) metaUnsub()
+    if (playersUnsub) playersUnsub()
     if (privateUnsub) privateUnsub()
     if (opponentPrivateUnsub) opponentPrivateUnsub()
-    roomUnsub = privateUnsub = opponentPrivateUnsub = null
+    metaUnsub = playersUnsub = privateUnsub = opponentPrivateUnsub = null
     set(initialState)
   },
 }))
-
-async function fetchRoomOnce(roomId) {
-  const snap = await fbGet(ref(rtdb, `rooms/${roomId}`))
-  return snap.val()
-}

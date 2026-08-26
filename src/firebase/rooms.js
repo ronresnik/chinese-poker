@@ -197,9 +197,24 @@ export async function markComplete(roomId) {
   await update(ref(rtdb), { [`rooms/${roomId}/meta/status`]: 'complete' })
 }
 
-export function subscribeRoom(roomId, onChange) {
-  const unsub = onValue(ref(rtdb, `rooms/${roomId}`), (snap) => onChange(snap.val()))
-  return unsub
+/**
+ * meta and players each have a single, uniform access rule that doesn't
+ * depend on which child is being read (meta: any authenticated user;
+ * players: any room member) — safe to read/listen to as one broad
+ * request. rooms/{roomId} as a whole is NOT safe to read broadly: RTDB
+ * rules aren't a filter, so a single read touching both an accessible
+ * child (meta) and an inaccessible one (e.g. private/{opponentUid}
+ * pre-showdown) fails in its entirety, not just the denied part. That's
+ * why there's no subscribeRoom() here — see useOnlineGameStore.js, which
+ * subscribes to meta, players, and each private/{uid} as separate
+ * listeners instead.
+ */
+export function subscribeMeta(roomId, onChange) {
+  return onValue(ref(rtdb, `rooms/${roomId}/meta`), (snap) => onChange(snap.val()))
+}
+
+export function subscribePlayers(roomId, onChange) {
+  return onValue(ref(rtdb, `rooms/${roomId}/players`), (snap) => onChange(snap.val()))
 }
 
 export function subscribePrivate(roomId, uid, onChange) {
@@ -207,8 +222,8 @@ export function subscribePrivate(roomId, uid, onChange) {
   return unsub
 }
 
-export async function readRoom(roomId) {
-  const snap = await get(ref(rtdb, `rooms/${roomId}`))
+export async function fetchMetaOnce(roomId) {
+  const snap = await get(ref(rtdb, `rooms/${roomId}/meta`))
   return snap.val()
 }
 

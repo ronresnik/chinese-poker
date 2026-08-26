@@ -27,9 +27,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Kept in step with the Node the project is developed against.
+      # These drifted apart once (CI on 20, development on 22) and the
+      # difference silently broke the build: `node --test` only learned to
+      # expand glob patterns itself in Node 21, so a globbed test script
+      # passed locally and failed here with "Could not find
+      # 'src/**/*.test.js'". The test script no longer depends on that
+      # (see package.json), but matching versions keeps the next such
+      # difference from being discovered in CI.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - run: npm ci

@@ -1,4 +1,4 @@
-import { openColumns } from './board.js'
+import { openColumnsForPlacement } from './board.js'
 import { rankValue } from './deck.js'
 import { evaluateHand } from './handEvaluator.js'
 import { evaluateSwapOptions, bestSwapOption } from './swap.js'
@@ -52,7 +52,7 @@ export function potentialScore(existingCards, candidate) {
 }
 
 export function scorePlacementOptions(board, card) {
-  return openColumns(board)
+  return openColumnsForPlacement(board)
     .map((col) => ({ col, score: potentialScore(board[col], card) }))
     .sort((a, b) => b.score - a.score)
 }

@@ -81,11 +81,18 @@ rooms/{roomId}/
 - **dealing:** host shuffles once and writes each player's full allocation
   in one shot — `initialHand` (5), `drawQueue` (20), `swapCard` (1) — then
   both clients independently evaluate their own `initialHand` to determine
-  `firstPlayerUid`. See "Why pre-allocate draws" below.
+  `firstPlayerUid`, and each writes its own `initialHand` straight onto its
+  board, one card per column (self-write, no player choice — see
+  `src/game/README.md`), filling row 0 before any turn-based placement.
+  See "Why pre-allocate draws" below.
 - **placing:** the 40-card turn-based phase (20 placements per player,
-  filling rows 0-3 of all 5 columns, then row 4 face-down) — each player
+  filling rows 1-3 of all 5 columns, then row 4 face-down) — each player
   draws from their own already-allocated `drawQueue`, no further host
-  involvement needed.
+  involvement needed. A column may only receive its next card once every
+  other column in that player's board already holds at least that many
+  (enforced client-side, mirroring the local engine's
+  `openColumnsForPlacement`) — row 1 fills across all 5 columns before any
+  column starts row 2, and so on.
 - **swap:** each player already holds their `swapCard` from the initial
   allocation; they may swap it into one of their `hiddenCardByCol` slots
   before locking in, or keep their board as is.

@@ -1,5 +1,5 @@
 import { createShuffledDeck } from './deck.js'
-import { createEmptyBoard, isBoardFull, placeCard as placeCardOnBoard } from './board.js'
+import { createEmptyBoard, isBoardFull, dealInitialRow, openColumnsForPlacement, placeCard as placeCardOnBoard } from './board.js'
 import { determineFirstPlayer } from './turnOrder.js'
 import { evaluateShowdown, calculatePayout } from './scoring.js'
 import { applySwap } from './swap.js'
@@ -18,6 +18,11 @@ export const PHASE = {
  * phase (docs/firebase-schema.md) exists only because the host has to
  * write each player's private hand over the network before play starts;
  * that's a store-layer concern, not something this pure engine needs.
+ *
+ * The initial 5-card hand is dealt straight onto the board — one card per
+ * column, no player choice — immediately after being evaluated to decide
+ * turn order. From there play proceeds one draw-and-place turn at a time,
+ * constrained to fill row by row (see openColumnsForPlacement).
  *
  * @param {{players:{uid:string,name:string,isBot?:boolean}[], cashGame?:object}} config
  */
@@ -40,8 +45,7 @@ export function initGame({ players, cashGame }) {
       uid: p.uid,
       name: p.name,
       isBot: !!p.isBot,
-      hand: initialHands[p.uid],
-      board: createEmptyBoard(),
+      board: dealInitialRow(createEmptyBoard(), initialHands[p.uid]),
       initialHandRank: evaluatedHands[p.uid],
       swapCard: null,
       swapUsed: false,
@@ -67,10 +71,9 @@ export function getCurrentTurnUid(state) {
   return state.status === PHASE.PLACING ? state.order[state.turnIndex % 2] : null
 }
 
-/** The card `uid` would place next, without mutating state — for UI display. */
-export function getNextCard(state, uid) {
-  const player = state.players[uid]
-  return player.hand.length > 0 ? player.hand[0] : state.deck[0]
+/** The card `uid` would draw next, without mutating state — for UI display. */
+export function getNextCard(state) {
+  return state.deck[0]
 }
 
 export function placeCard(state, uid, col) {
@@ -78,30 +81,27 @@ export function placeCard(state, uid, col) {
   if (getCurrentTurnUid(state) !== uid) throw new Error(`It is not ${uid}'s turn`)
 
   const player = state.players[uid]
-  let card
-  let hand = player.hand
-  let deck = state.deck
-  if (hand.length > 0) {
-    card = hand[0]
-    hand = hand.slice(1)
-  } else {
-    if (deck.length === 0) throw new Error('Deck is empty — this should be unreachable given the card math')
-    card = deck[0]
-    deck = deck.slice(1)
+  if (!openColumnsForPlacement(player.board).includes(col)) {
+    throw new Error(`Column ${col} isn't eligible yet — finish the current row across all columns first`)
   }
+  if (state.deck.length === 0) throw new Error('Deck is empty — this should be unreachable given the card math')
+
+  const card = state.deck[0]
+  const deck = state.deck.slice(1)
 
   const coachTip = coachTipForPlacement(player.board, card, col)
   const newBoard = placeCardOnBoard(player.board, col, card)
   const placedCard = newBoard[col][newBoard[col].length - 1]
 
-  let players = { ...state.players, [uid]: { ...player, hand, board: newBoard } }
+  let players = { ...state.players, [uid]: { ...player, board: newBoard } }
   let status = state.status
+  let finalDeck = deck
 
   if (Object.values(players).every((p) => isBoardFull(p.board))) {
     status = PHASE.SWAP
     for (const playerUid of state.order) {
-      const swapCard = deck[0]
-      deck = deck.slice(1)
+      const swapCard = finalDeck[0]
+      finalDeck = finalDeck.slice(1)
       players = { ...players, [playerUid]: { ...players[playerUid], swapCard } }
     }
   }
@@ -117,7 +117,7 @@ export function placeCard(state, uid, col) {
   return {
     ...state,
     players,
-    deck,
+    deck: finalDeck,
     status,
     turnIndex: state.turnIndex + 1,
     log: [...state.log, logEntry],

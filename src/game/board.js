@@ -18,6 +18,25 @@ export function openColumns(board) {
   return COLUMNS.filter((col) => !isColumnFull(board, col))
 }
 
+// The row-by-row rule: a column may only receive its next card once every
+// other column already holds at least that many cards — i.e. only the
+// least-filled column(s) are eligible. This is what forces row 0 to fill
+// across all 5 columns before any column starts row 1, and so on up to
+// the hidden row 4.
+export function openColumnsForPlacement(board) {
+  const lengths = COLUMNS.map((col) => board[col].length)
+  const minLen = Math.min(...lengths)
+  if (minLen >= COLUMN_SIZE) return []
+  return COLUMNS.filter((col) => board[col].length === minLen)
+}
+
+// The initial 5-card deal fills row 0 automatically, one card per column
+// in order (col1..col5) — there's no player choice here, see
+// src/game/README.md. `cards` must have exactly 5 entries.
+export function dealInitialRow(board, cards) {
+  return COLUMNS.reduce((b, col, i) => placeCard(b, col, cards[i]), board)
+}
+
 // Columns fill strictly bottom-to-top, so whichever card lands in the last
 // slot (index 4) is, by construction, always "the last card placed in that
 // column" — the face-down row the rules call for. See src/game/README.md.

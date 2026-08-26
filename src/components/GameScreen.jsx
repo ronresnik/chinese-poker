@@ -1,12 +1,18 @@
-import { COLUMNS } from '../game/board.js'
-import { columnOutcomesFor } from '../game/scoring.js'
+import { useEffect, useRef, useState } from 'react'
+import { motion } from 'framer-motion'
+import { openColumnsForPlacement, COLUMNS } from '../game/board.js'
 import Card from './Card.jsx'
 import PlayerBoard from './PlayerBoard.jsx'
 import TurnBanner from './TurnBanner.jsx'
 import CashBadge from './CashBadge.jsx'
 import CoachTipToast from './CoachTipToast.jsx'
 import SwapBar from './SwapBar.jsx'
+import ShowdownReveal from './ShowdownReveal.jsx'
 import ShowdownModal from './ShowdownModal.jsx'
+
+function cardKey(card) {
+  return card?.rank && card?.suit ? `card-${card.rank}${card.suit}` : undefined
+}
 
 /**
  * Shared board+swap+showdown UI for both single-player and online games —
@@ -39,12 +45,34 @@ export default function GameScreen({
   const isSwap = status === 'swap'
   const isDone = status === 'showdown' || status === 'complete'
 
-  const openForPlacement = isPlacing && isMyTurn ? COLUMNS.filter((c) => (myBoard[c]?.length ?? 0) < 5) : []
+  const [revealDone, setRevealDone] = useState(false)
+  useEffect(() => {
+    if (result) setRevealDone(false)
+  }, [result])
+
+  // Scopes the "fly from center to column" shared-layout transition to
+  // exactly the one card that was just placed, for one brief moment —
+  // applying layoutId to every column's last card persistently would
+  // trigger unwanted shared-transitions on any unrelated layout shift
+  // (e.g. the coach tip toast appearing/disappearing).
+  const [flyingKey, setFlyingKey] = useState(null)
+  const prevNextCardRef = useRef(nextCard)
+  useEffect(() => {
+    const prev = prevNextCardRef.current
+    prevNextCardRef.current = nextCard
+    if (prev && cardKey(prev) !== cardKey(nextCard)) {
+      const key = cardKey(prev)
+      setFlyingKey(key)
+      const timer = setTimeout(() => setFlyingKey(null), 500)
+      return () => clearTimeout(timer)
+    }
+    return undefined
+  }, [nextCard])
+
+  const openForPlacement = isPlacing && isMyTurn ? openColumnsForPlacement(myBoard) : []
   const openForSwap = isSwap && !myLocked ? COLUMNS : []
 
-  const myOutcomes = isDone && result ? columnOutcomesFor(result.columns, myUid) : {}
-  const oppUid = result ? Object.keys(result.columnsWon).find((u) => u !== myUid) : null
-  const oppOutcomes = isDone && result && oppUid ? columnOutcomesFor(result.columns, oppUid) : {}
+  const opponentUid = result ? Object.keys(result.columnsWon).find((u) => u !== myUid) : null
 
   return (
     <div className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-3 px-3 py-3">
@@ -56,7 +84,7 @@ export default function GameScreen({
         <CashBadge cashGame={cashGame} />
       </div>
 
-      <PlayerBoard board={opponentBoard} columnOutcomes={oppOutcomes} />
+      <PlayerBoard board={opponentBoard} />
 
       <TurnBanner status={status} isMyTurn={isMyTurn} myLocked={myLocked} opponentLocked={opponentLocked} />
 
@@ -65,25 +93,38 @@ export default function GameScreen({
       {isPlacing && isMyTurn && nextCard && (
         <div className="flex items-center justify-center gap-3 rounded-xl bg-white/5 p-2">
           <span className="text-xs text-white/50">Your card</span>
-          <Card card={nextCard} size="lg" highlight />
+          <motion.div layoutId={cardKey(nextCard)} transition={{ type: 'spring', stiffness: 700, damping: 40 }}>
+            <Card card={nextCard} size="lg" highlight />
+          </motion.div>
         </div>
       )}
 
-      {isSwap && (
-        <SwapBar swapCard={swapCard} locked={myLocked} onKeep={() => onSwapCard(null)} />
-      )}
+      {isSwap && <SwapBar swapCard={swapCard} locked={myLocked} onKeep={() => onSwapCard(null)} />}
 
       <PlayerBoard
         board={myBoard}
         size="md"
         openColumns={[...openForPlacement, ...openForSwap]}
         onPlaceColumn={isPlacing ? onPlaceCard : onSwapCard}
-        columnOutcomes={myOutcomes}
+        flyingCardKey={flyingKey}
       />
 
       <div className="text-center text-sm font-medium text-white/70">{myName} (you)</div>
 
-      {isDone && result && (
+      {isDone && result && !revealDone && (
+        <ShowdownReveal
+          result={result}
+          myUid={myUid}
+          opponentUid={opponentUid}
+          myName={myName}
+          opponentName={opponentName}
+          myBoard={myBoard}
+          opponentBoard={opponentBoard}
+          onContinue={() => setRevealDone(true)}
+        />
+      )}
+
+      {isDone && result && revealDone && (
         <ShowdownModal
           result={result}
           myUid={myUid}

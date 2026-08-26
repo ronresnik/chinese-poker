@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createEmptyBoard, placeCard } from './board.js'
+import { createEmptyBoard, placeCard, COLUMNS } from './board.js'
 import { coachTipForPlacement, coachTipForSwap, scorePlacementOptions } from './aiCoach.js'
 import { chooseBotPlacement, chooseBotSwap } from './bot.js'
 
@@ -14,22 +14,38 @@ function fillColumn(board, col, codes) {
   return b
 }
 
+// Fills every column to the same depth (satisfying the row-by-row rule,
+// see openColumnsForPlacement) from a {col: [codes]} map, so every column
+// stays eligible for the next placement in these fixtures.
+function fillAllColumns(cardsByCol) {
+  let board = createEmptyBoard()
+  for (const col of COLUMNS) board = fillColumn(board, col, cardsByCol[col])
+  return board
+}
+
 // Fills every column with a royal flush (As Ks Qs Js Ts) — the best
 // possible 5-card hand, so no single-card swap can ever improve it. Board
 // rules don't enforce cross-column/deck uniqueness (that's a Firebase-rules
 // concern for the online mode, see docs/firebase-schema.md), so this is a
 // safe fixture for exercising "nothing improves" logic in isolation.
 function fullUnbeatableBoard() {
-  let board = createEmptyBoard()
-  for (const col of ['col1', 'col2', 'col3', 'col4', 'col5']) {
-    board = fillColumn(board, col, ['As', 'Ks', 'Qs', 'Js', 'Ts'])
-  }
-  return board
+  return fillAllColumns(Object.fromEntries(COLUMNS.map((col) => [col, ['As', 'Ks', 'Qs', 'Js', 'Ts']])))
+}
+
+// col1 is one card from a club flush; the rest hold unrelated cards at the
+// same depth, so all 5 stay eligible together under the row-by-row rule.
+function flushDrawBoard() {
+  return fillAllColumns({
+    col1: ['2c', '5c', '9c', 'Kc'],
+    col2: ['2h', '5d', '9s', 'Kd'],
+    col3: ['3h', '6d', 'Ts', 'Qd'],
+    col4: ['4h', '7d', 'Js', 'Ad'],
+    col5: ['3s', '6h', '8d', 'Qh'],
+  })
 }
 
 test('a card completing a flush scores higher than a random open column', () => {
-  let board = createEmptyBoard()
-  board = fillColumn(board, 'col1', ['2c', '5c', '9c', 'Kc'])
+  const board = flushDrawBoard()
   const options = scorePlacementOptions(board, c('7c'))
   const col1 = options.find((o) => o.col === 'col1')
   const col2 = options.find((o) => o.col === 'col2')
@@ -37,15 +53,13 @@ test('a card completing a flush scores higher than a random open column', () => 
 })
 
 test('coachTipForPlacement rates the best column as great', () => {
-  let board = createEmptyBoard()
-  board = fillColumn(board, 'col1', ['2c', '5c', '9c', 'Kc'])
+  const board = flushDrawBoard()
   const tip = coachTipForPlacement(board, c('7c'), 'col1')
   assert.equal(tip.rating, 'great')
 })
 
 test('coachTipForPlacement rates a weak column as risky when a strong one was open', () => {
-  let board = createEmptyBoard()
-  board = fillColumn(board, 'col1', ['2c', '5c', '9c', 'Kc'])
+  const board = flushDrawBoard()
   const tip = coachTipForPlacement(board, c('7c'), 'col5')
   assert.equal(tip.bestCol, 'col1')
   assert.notEqual(tip.rating, 'great')
@@ -67,8 +81,7 @@ test('coachTipForSwap: keeping board when nothing improves is rated great', () =
 })
 
 test('bot placement always chooses one of the open columns', () => {
-  let board = createEmptyBoard()
-  board = fillColumn(board, 'col1', ['2c', '5c', '9c', 'Kc'])
+  const board = flushDrawBoard()
   const col = chooseBotPlacement(board, c('7c'), () => 0.99) // force exploitation path
   assert.equal(col, 'col1')
 })

@@ -9,12 +9,13 @@ import {
   joinRoom,
   dealRoom,
   publishInitialHandRank,
+  publishInitialBoard,
   placeCardOnline,
   chooseSwapOnline,
   markComplete,
   subscribeRoom,
 } from '../firebase/rooms.js'
-import { COLUMNS, HIDDEN_ROW_INDEX } from '../game/board.js'
+import { COLUMNS, HIDDEN_ROW_INDEX, openColumnsForPlacement } from '../game/board.js'
 import { coachTipForPlacement, coachTipForSwap } from '../game/aiCoach.js'
 import { evaluateShowdown, calculatePayout } from '../game/scoring.js'
 import { recordGameResult } from './useLeaderboardStore.js'
@@ -83,6 +84,7 @@ let roomUnsub = null
 let privateUnsub = null
 let opponentPrivateUnsub = null
 let dealTriggered = false
+let initialBoardTriggered = false
 let completeHandled = false
 
 export const useOnlineGameStore = create((set, get) => ({
@@ -106,6 +108,7 @@ export const useOnlineGameStore = create((set, get) => ({
   _attach({ roomId, uid, name, isHost }) {
     get().leave()
     dealTriggered = false
+    initialBoardTriggered = false
     completeHandled = false
     set({ ...initialState, roomId, myUid: uid, myName: name, isHost, status: 'waiting' })
 
@@ -159,6 +162,19 @@ export const useOnlineGameStore = create((set, get) => ({
     if (priv?.initialHand && !room?.players?.[myUid]?.initialHandRank) {
       publishInitialHandRank(roomId, myUid, priv.initialHand).catch(() => {})
     }
+
+    // Auto-deal: the initial 5 cards land one per column, no player
+    // choice (mirrors src/game/engine.js's initGame) — self-write, so
+    // this doesn't wait on the host or any particular room status beyond
+    // having our own private hand to deal from.
+    const myPublicBoard = normalizeBoard(room?.players?.[myUid]?.board)
+    const alreadyDealt = totalPlaced(myPublicBoard) > 0
+    if (priv?.initialHand && !alreadyDealt && !initialBoardTriggered) {
+      initialBoardTriggered = true
+      publishInitialBoard(roomId, myUid, priv.initialHand).catch(() => {
+        initialBoardTriggered = false
+      })
+    }
   },
 
   _onOpponentPrivate(priv) {
@@ -179,6 +195,7 @@ export const useOnlineGameStore = create((set, get) => ({
   async place(col) {
     const { room, roomId, myUid, opponentUid, myBoard } = get()
     if (!room || room.meta.status !== 'placing' || room.meta.turnUid !== myUid) return
+    if (!openColumnsForPlacement(myBoard).includes(col)) return
     const card = get().nextCardToPlace()
     if (!card) return
 

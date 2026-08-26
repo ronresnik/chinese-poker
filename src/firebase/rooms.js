@@ -116,6 +116,24 @@ export async function publishInitialHandRank(roomId, uid, initialHand) {
 }
 
 /**
+ * Self-write: the initial 5-card hand is dealt straight onto the board,
+ * one card per column, no player choice (mirrors src/game/engine.js's
+ * initGame — see src/game/README.md). Safe to combine into one call: each
+ * column's board/$idx validate rule only checks its own node, never a
+ * sibling column being written in the same update.
+ */
+export async function publishInitialBoard(roomId, uid, initialHand) {
+  const updates = {}
+  COLUMNS.forEach((col, i) => {
+    const card = initialHand[i]
+    updates[`rooms/${roomId}/players/${uid}/board/${col}/0/faceDown`] = false
+    updates[`rooms/${roomId}/players/${uid}/board/${col}/0/rank`] = card.rank
+    updates[`rooms/${roomId}/players/${uid}/board/${col}/0/suit`] = card.suit
+  })
+  await update(ref(rtdb), updates)
+}
+
+/**
  * Places `card` for `uid` into `col`. `nextIndex` (0-4) is the position it
  * lands at — the caller (useOnlineGameStore) derives this from the
  * player's current public board length, since that's the same number both

@@ -15,6 +15,7 @@ export default function PlayerBoard({
   openColumns = [],
   onPlaceColumn,
   columnOutcomes = {},
+  flyingCardKey = null,
 }) {
   return (
     <div className="grid grid-cols-5 gap-1 sm:gap-2">
@@ -27,6 +28,8 @@ export default function PlayerBoard({
           onTap={() => onPlaceColumn?.(col)}
           outcome={columnOutcomes[col] ?? null}
           label={`${i + 1}`}
+          flyingCardKey={flyingCardKey}
+          columnIndex={i}
         />
       ))}
     </div>

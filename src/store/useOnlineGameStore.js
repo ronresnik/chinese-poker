@@ -16,7 +16,19 @@ import {
   subscribeMeta,
   subscribePlayers,
   fetchMetaOnce,
+  markConnected,
 } from '../firebase/rooms.js'
+import { shortId, describeRole } from '../firebase/errors.js'
+import {
+  decideRoomEntry,
+  RESUME_HOST,
+  RESUME_GUEST,
+  TAKE_SEAT,
+  NOT_MEMBER,
+  ROOM_MISSING,
+  ROOM_FULL,
+  NOT_SIGNED_IN,
+} from '../firebase/roomEntry.js'
 import { COLUMNS, HIDDEN_ROW_INDEX, openColumnsForPlacement } from '../game/board.js'
 import { coachTipForPlacement, coachTipForSwap } from '../game/aiCoach.js'
 import { evaluateShowdown, calculatePayout } from '../game/scoring.js'
@@ -109,12 +121,103 @@ export const useOnlineGameStore = create((set, get) => ({
     return roomId
   },
 
+  /**
+   * Enters a room by code. This deliberately handles *four* cases rather
+   * than only "a stranger takes the empty seat", because the other three
+   * were each producing a bare PERMISSION_DENIED that no player could act
+   * on:
+   *
+   *  - You are the room's host. Joining your own room as the second
+   *    player is denied by the rules (guestUid must differ from hostUid),
+   *    which is correct — but the fix is to *resume* your seat, not to
+   *    show a permissions error. This is also what happens when a host's
+   *    tab reloads: the store is memory-only, so the host silently drops
+   *    out of their own room and the game can never start (only the host
+   *    is allowed to deal). That is exactly the "two players joined but
+   *    status stayed 'waiting'" state seen in the database.
+   *  - You are already the guest — same thing, resume rather than
+   *    re-claim a seat you already hold.
+   *  - The seat is genuinely taken by someone else.
+   *  - The room doesn't exist.
+   */
   async joinGame({ roomId, uid, name }) {
-    const meta = await fetchMetaOnce(roomId)
-    if (!meta?.hostUid) throw new Error('Room not found')
-    if (meta.guestUid) throw new Error('Room is already full')
-    await joinRoom({ roomId, guestUid: uid, guestName: name })
-    get()._attach({ roomId, uid, name, isHost: false })
+    return get()._enterRoom({ roomId, uid, name, allowNewSeat: true })
+  },
+
+  // Resume-only: never claims the second seat. Used when landing on a
+  // room URL directly, so an accidental visit can't consume the seat the
+  // real opponent is about to take.
+  async resumeRoom({ roomId, uid, name }) {
+    return get()._enterRoom({ roomId, uid, name, allowNewSeat: false })
+  },
+
+  async _enterRoom({ roomId, uid, name, allowNewSeat }) {
+    const code = String(roomId ?? '').trim()
+    if (!code) throw new Error('Enter the room code your opponent shared with you.')
+
+    const meta = uid ? await fetchMetaOnce(code, uid) : null
+    const { action, isHost } = decideRoomEntry({ meta, myUid: uid, allowNewSeat })
+
+    switch (action) {
+      case RESUME_HOST:
+      case RESUME_GUEST:
+        await markConnected(code, uid)
+        get()._attach({ roomId: code, uid, name, isHost })
+        return { resumed: true, isHost }
+
+      case TAKE_SEAT:
+        await joinRoom({
+          roomId: code,
+          guestUid: uid,
+          guestName: name,
+          facts: { hostUid: meta.hostUid, guestUid: meta.guestUid, roomStatus: meta.status },
+        })
+        get()._attach({ roomId: code, uid, name, isHost: false })
+        return { resumed: false, isHost: false }
+
+      case NOT_MEMBER: {
+        const err = new Error('You are not a player in this room.')
+        err.notAMember = true
+        throw err
+      }
+
+      case ROOM_MISSING:
+        throw new Error(
+          [
+            `No room with the code "${code}" exists.`,
+            '',
+            'Room codes are case-sensitive and usually start with "-". Check for a missing character or a stray space, and make sure the host still has the room open.',
+          ].join('\n'),
+        )
+
+      case ROOM_FULL:
+        throw new Error(
+          [
+            'This room already has both of its players.',
+            '',
+            'A room seats exactly two people. If you think this should be your seat, the most likely cause is that this browser is signed in as a different anonymous user than before — anonymous identity is per-browser and is lost when site data is cleared.',
+            '',
+            'Diagnostics:',
+            `  room id     : ${code}`,
+            `  your uid    : ${shortId(uid)}`,
+            `  host uid    : ${shortId(meta.hostUid)}`,
+            `  guest uid   : ${shortId(meta.guestUid)}`,
+            `  you are     : ${describeRole({ myUid: uid, hostUid: meta.hostUid, guestUid: meta.guestUid })}`,
+            `  room status : ${meta.status ?? '(unknown)'}`,
+          ].join('\n'),
+        )
+
+      case NOT_SIGNED_IN:
+      default:
+        throw new Error(
+          [
+            'This device is not signed in, so it cannot open a room.',
+            '',
+            'Anonymous sign-in happens automatically, but it fails silently in a private/incognito window, and in in-app browsers (Instagram, WhatsApp, Messenger) that block the site storage Firebase needs.',
+            'Try opening the site in Safari or Chrome directly.',
+          ].join('\n'),
+        )
+    }
   },
 
   _attach({ roomId, uid, name, isHost }) {

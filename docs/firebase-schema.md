@@ -156,6 +156,62 @@ own subtree for a given reader (doesn't depend on which specific child is
 being touched), which is what makes reading each of them broadly, on its
 own, safe.
 
+### Entering a room is not the same as taking a seat
+
+The rule `meta/guestUid` enforces — correctly — that the guest must be a
+*different* user than the host:
+
+```
+"guestUid": { ".write": "... && root.child(...).child('meta/hostUid').val() !== auth.uid" }
+```
+
+The client originally treated "enter a room by code" as always meaning
+"claim the empty second seat", which collides with that rule in the one
+case that matters most: **the host re-entering their own room**. That
+isn't a hypothetical. The online store holds the room purely in memory,
+so any reload — including iOS silently evicting a backgrounded tab, which
+happens routinely when you switch apps to send someone the room code —
+drops the host out of their own room with no way back in. And because
+only the host may deal (see the trust model above), a host who lost their
+tab leaves the guest waiting forever: the room sits at `status: "waiting"`
+with two players registered and never progresses.
+
+Entering a room is therefore resolved as four separate outcomes
+(`src/firebase/roomEntry.js`, unit-tested without a live database):
+
+| you are | outcome |
+| --- | --- |
+| the host | resume your seat |
+| the guest | resume your seat |
+| a stranger, second seat free | take the seat |
+| a stranger, second seat taken | refused, with the uid comparison shown |
+
+Resuming is checked **before** the "is the room full?" test, because a
+member re-entering isn't competing for a seat — they already hold one.
+Landing on a room URL directly uses a resume-only mode so an accidental
+visit can never consume the seat the real opponent is about to take.
+
+### Why room errors are reported at length
+
+RTDB denials are deliberately uninformative — the rules can't leak which
+condition failed, or they'd be probeable. That's fine for security and
+terrible for a player: `get()` rejects with a bare `Permission denied`
+and `update()` with `PERMISSION_DENIED: Permission denied`, for every one
+of the a dozen-odd separate writes the online flow makes, with no path and
+no reason. Shown raw, as the app first did, the message cannot distinguish
+"you tried to join your own room" from "the Console still has last week's
+rules" from "this in-app browser blocked storage so you were never signed
+in at all".
+
+`src/firebase/errors.js` reconstructs what Firebase won't say, from
+context the client already has: which operation and path were attempted,
+the reader's uid next to the room's `hostUid`/`guestUid` (the single most
+diagnostic line — it collapses a uid comparison the reader would
+otherwise have to do by eye), whether sign-in actually succeeded, and
+which database host the app is talking to (rules published to a
+*different* database look exactly like stale rules). Causes are listed
+most-likely-first per operation, and the whole block is copyable.
+
 ---
 
 ## Firestore

@@ -2,12 +2,13 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/useAuthStore.js'
 import { useOnlineGameStore } from '../store/useOnlineGameStore.js'
+import ErrorReport from '../components/ErrorReport.jsx'
 
 const CURRENCIES = ['USD', 'NIS', 'EUR', 'GBP']
 
 export default function Home() {
   const navigate = useNavigate()
-  const { user, status: authStatus } = useAuthStore()
+  const { user, status: authStatus, error: authError } = useAuthStore()
   const hostGame = useOnlineGameStore((s) => s.hostGame)
   const joinGame = useOnlineGameStore((s) => s.joinGame)
 
@@ -115,7 +116,23 @@ export default function Home() {
         )}
       </div>
 
-      {error && <p className="text-center text-sm text-red-400">{error}</p>}
+      {error && <ErrorReport message={error} />}
+
+      {authStatus === 'error' && !error && (
+        <ErrorReport
+          message={[
+            'Online play is unavailable on this device.',
+            '',
+            `Sign-in failed: ${authError ?? 'unknown reason'}`,
+            '',
+            'This is almost always one of:',
+            '  1. An in-app browser (Instagram, WhatsApp, Messenger) or a private/incognito window blocking the site storage Firebase needs. Open the site in Safari or Chrome directly.',
+            '  2. No network connection.',
+            '',
+            'Playing vs. the computer works regardless — it never touches the network.',
+          ].join('\n')}
+        />
+      )}
 
       <div className="flex flex-col gap-3">
         <button

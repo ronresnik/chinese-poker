@@ -1,5 +1,6 @@
 import { ref, get, update, onValue, push, onDisconnect, serverTimestamp } from 'firebase/database'
-import { rtdb } from './config.js'
+import { rtdb, auth } from './config.js'
+import { buildRoomErrorReport } from './errors.js'
 import { buildDealPlan } from '../game/dealPlan.js'
 import { evaluateHand } from '../game/handEvaluator.js'
 import { COLUMNS, HIDDEN_ROW_INDEX } from '../game/board.js'
@@ -9,9 +10,69 @@ export function newRoomId() {
   return push(ref(rtdb, 'rooms')).key
 }
 
+/**
+ * Wraps one RTDB call so a failure carries the context needed to explain
+ * itself (see errors.js). Firebase's own message names neither the path
+ * nor the operation, and this app's whole online flow is a chain of
+ * separate small writes — without this, every one of them fails with the
+ * identical unusable string.
+ */
+async function guarded(op, path, facts, fn) {
+  try {
+    return await fn()
+  } catch (err) {
+    const report = buildRoomErrorReport({
+      op,
+      path,
+      err,
+      facts: { ...facts, ...ambientFacts() },
+    })
+    const wrapped = new Error(report)
+    wrapped.cause = err
+    wrapped.isRoomError = true
+    throw wrapped
+  }
+}
+
+// Environment-level facts every report wants, gathered here so no call
+// site has to remember them. databaseHost in particular catches a whole
+// class of "I published the rules" confusion — rules published to a
+// different database than the app talks to look exactly like stale rules.
+function ambientFacts() {
+  let databaseHost
+  try {
+    databaseHost = rtdb ? new URL(rtdb.app.options.databaseURL).host : '(rtdb not initialized)'
+  } catch {
+    databaseHost = rtdb?.app?.options?.databaseURL ?? '(unknown)'
+  }
+  return {
+    databaseHost,
+    signedIn: !!auth?.currentUser,
+    mode: import.meta.env?.MODE,
+    now: new Date().toISOString(),
+  }
+}
+
 export function setupPresence(roomId, uid) {
   const connectedRef = ref(rtdb, `rooms/${roomId}/players/${uid}/connected`)
-  onDisconnect(connectedRef).set(false)
+  // Fire-and-forget: presence is a nicety, and a failure here must never
+  // be what stops a player from entering a room they're otherwise allowed
+  // into. Left unhandled it would also surface as an unhandled rejection.
+  onDisconnect(connectedRef).set(false).catch(() => {})
+}
+
+/**
+ * Marks an existing member as connected again and re-arms their
+ * disconnect hook. Needed because the online store holds the room purely
+ * in memory: a reload (or iOS evicting a backgrounded tab) drops the
+ * player out of their own room with `connected` stuck at false, and
+ * nothing else ever sets it back.
+ */
+export async function markConnected(roomId, uid) {
+  await guarded('rejoin', `rooms/${roomId}/players/${uid}/connected`, { roomId, myUid: uid }, () =>
+    update(ref(rtdb), { [`rooms/${roomId}/players/${uid}/connected`]: true }),
+  )
+  setupPresence(roomId, uid)
 }
 
 /**
@@ -29,29 +90,44 @@ export function setupPresence(roomId, uid) {
  */
 
 export async function createRoom({ roomId, hostUid, hostName, cashGame }) {
-  await update(ref(rtdb), { [`rooms/${roomId}/meta/hostUid`]: hostUid })
-  await update(ref(rtdb), { [`rooms/${roomId}/meta/status`]: 'waiting' })
-  await update(ref(rtdb), {
-    [`rooms/${roomId}/meta/cashGame`]: cashGame,
-    [`rooms/${roomId}/meta/createdAt`]: serverTimestamp(),
-    [`rooms/${roomId}/meta/updatedAt`]: serverTimestamp(),
-    [`rooms/${roomId}/players/${hostUid}/displayName`]: hostName,
-    [`rooms/${roomId}/players/${hostUid}/connected`]: true,
-    [`rooms/${roomId}/players/${hostUid}/locked`]: false,
-    [`rooms/${roomId}/players/${hostUid}/swapUsed`]: false,
-  })
+  const facts = { roomId, myUid: hostUid, hostUid }
+  await guarded('create-room', `rooms/${roomId}/meta/hostUid`, facts, () =>
+    update(ref(rtdb), { [`rooms/${roomId}/meta/hostUid`]: hostUid }),
+  )
+  await guarded('create-room', `rooms/${roomId}/meta/status`, facts, () =>
+    update(ref(rtdb), { [`rooms/${roomId}/meta/status`]: 'waiting' }),
+  )
+  await guarded('create-room', `rooms/${roomId}/meta + players/${hostUid}`, facts, () =>
+    update(ref(rtdb), {
+      [`rooms/${roomId}/meta/cashGame`]: cashGame,
+      [`rooms/${roomId}/meta/createdAt`]: serverTimestamp(),
+      [`rooms/${roomId}/meta/updatedAt`]: serverTimestamp(),
+      [`rooms/${roomId}/players/${hostUid}/displayName`]: hostName,
+      [`rooms/${roomId}/players/${hostUid}/connected`]: true,
+      [`rooms/${roomId}/players/${hostUid}/locked`]: false,
+      [`rooms/${roomId}/players/${hostUid}/swapUsed`]: false,
+    }),
+  )
   setupPresence(roomId, hostUid)
 }
 
-export async function joinRoom({ roomId, guestUid, guestName }) {
-  await update(ref(rtdb), { [`rooms/${roomId}/meta/guestUid`]: guestUid })
-  await update(ref(rtdb), {
-    [`rooms/${roomId}/meta/updatedAt`]: serverTimestamp(),
-    [`rooms/${roomId}/players/${guestUid}/displayName`]: guestName,
-    [`rooms/${roomId}/players/${guestUid}/connected`]: true,
-    [`rooms/${roomId}/players/${guestUid}/locked`]: false,
-    [`rooms/${roomId}/players/${guestUid}/swapUsed`]: false,
-  })
+// `facts` carries the room's host/guest uids so a denial can say *why*
+// (see errors.js) — "you are the host" and "someone else took the seat"
+// are the same PERMISSION_DENIED as far as Firebase is concerned.
+export async function joinRoom({ roomId, guestUid, guestName, facts = {} }) {
+  const base = { ...facts, roomId, myUid: guestUid }
+  await guarded('claim-guest-seat', `rooms/${roomId}/meta/guestUid`, base, () =>
+    update(ref(rtdb), { [`rooms/${roomId}/meta/guestUid`]: guestUid }),
+  )
+  await guarded('write-player', `rooms/${roomId}/players/${guestUid}`, { ...base, guestUid }, () =>
+    update(ref(rtdb), {
+      [`rooms/${roomId}/meta/updatedAt`]: serverTimestamp(),
+      [`rooms/${roomId}/players/${guestUid}/displayName`]: guestName,
+      [`rooms/${roomId}/players/${guestUid}/connected`]: true,
+      [`rooms/${roomId}/players/${guestUid}/locked`]: false,
+      [`rooms/${roomId}/players/${guestUid}/swapUsed`]: false,
+    }),
+  )
   setupPresence(roomId, guestUid)
 }
 
@@ -63,8 +139,11 @@ export async function joinRoom({ roomId, guestUid, guestName }) {
  */
 export async function dealRoom({ roomId, hostUid, guestUid }) {
   const { plan } = buildDealPlan(hostUid, guestUid)
+  const facts = { roomId, myUid: hostUid, hostUid, guestUid }
 
-  await update(ref(rtdb), { [`rooms/${roomId}/meta/status`]: 'dealing' })
+  await guarded('deal', `rooms/${roomId}/meta/status`, facts, () =>
+    update(ref(rtdb), { [`rooms/${roomId}/meta/status`]: 'dealing' }),
+  )
 
   const dealUpdates = {}
   for (const uid of [hostUid, guestUid]) {
@@ -72,19 +151,23 @@ export async function dealRoom({ roomId, hostUid, guestUid }) {
     dealUpdates[`rooms/${roomId}/private/${uid}/drawQueue`] = plan[uid].drawQueue
     dealUpdates[`rooms/${roomId}/private/${uid}/swapCard`] = plan[uid].swapCard
   }
-  await update(ref(rtdb), dealUpdates)
+  await guarded('deal', `rooms/${roomId}/private/{both players}`, facts, () =>
+    update(ref(rtdb), dealUpdates),
+  )
 
   const handA = evaluateHand(plan[hostUid].initialHand)
   const handB = evaluateHand(plan[guestUid].initialHand)
   const cmp = compareCategoryThenTiebreak(handA, handB)
   const firstPlayerUid = cmp === 0 ? [hostUid, guestUid].sort()[0] : cmp > 0 ? hostUid : guestUid
 
-  await update(ref(rtdb), {
-    [`rooms/${roomId}/meta/status`]: 'placing',
-    [`rooms/${roomId}/meta/turnUid`]: firstPlayerUid,
-    [`rooms/${roomId}/meta/firstPlayerUid`]: firstPlayerUid,
-    [`rooms/${roomId}/meta/updatedAt`]: serverTimestamp(),
-  })
+  await guarded('deal', `rooms/${roomId}/meta (status→placing)`, facts, () =>
+    update(ref(rtdb), {
+      [`rooms/${roomId}/meta/status`]: 'placing',
+      [`rooms/${roomId}/meta/turnUid`]: firstPlayerUid,
+      [`rooms/${roomId}/meta/firstPlayerUid`]: firstPlayerUid,
+      [`rooms/${roomId}/meta/updatedAt`]: serverTimestamp(),
+    }),
+  )
 
   const cardUpdates = {}
   for (const uid of [hostUid, guestUid]) {
@@ -166,7 +249,9 @@ export async function placeCardOnline({ roomId, uid, opponentTurnUid, col, card,
     updates[`rooms/${roomId}/meta/turnUid`] = opponentTurnUid
   }
 
-  await update(ref(rtdb), updates)
+  await guarded('place', `rooms/${roomId}/players/${uid}/board/${col}/${nextIndex}`, { roomId, myUid: uid }, () =>
+    update(ref(rtdb), updates),
+  )
 }
 
 export async function chooseSwapOnline({ roomId, uid, col, swapCard, bothLocked }) {
@@ -222,8 +307,10 @@ export function subscribePrivate(roomId, uid, onChange) {
   return unsub
 }
 
-export async function fetchMetaOnce(roomId) {
-  const snap = await get(ref(rtdb, `rooms/${roomId}/meta`))
+export async function fetchMetaOnce(roomId, myUid) {
+  const snap = await guarded('read-meta', `rooms/${roomId}/meta`, { roomId, myUid }, () =>
+    get(ref(rtdb, `rooms/${roomId}/meta`)),
+  )
   return snap.val()
 }
 

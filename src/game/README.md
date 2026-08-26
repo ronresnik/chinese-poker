@@ -13,16 +13,18 @@ rest is trivial to unit test (see the `*.test.js` files; run with
 2 cards from the 52-card deck for the swap step (1 per player). That match
 is what pins down the turn flow precisely:
 
-1. **Initial deal:** each player gets 5 cards as a "hand" (not yet on the
-   board). Both hands are evaluated as standalone 5-card poker hands
-   (`turnOrder.js`) purely to decide who acts first — the outcome doesn't
-   place any cards.
+1. **Initial deal:** each player gets 5 cards, evaluated as a standalone
+   5-card poker hand (`turnOrder.js`) to decide who acts first — then
+   those same 5 cards are dealt straight onto the board, one per column
+   (`board.js`'s `dealInitialRow`), with no player choice. This fills row
+   0 across all 5 columns before any turn-based placement happens.
 2. **Placement phase:** starting with the first player, turns alternate
-   one placement at a time. On each turn the acting player places one card
-   from their hand into any column that isn't full yet (5 cards). Once a
-   player's hand is empty, their next turn draws one new card from the
-   shared deck before placing it. This runs for 25 placements per player
-   (50 total) until every column on both boards is full.
+   one placement at a time, each turn drawing the next card from the deck.
+   A column may only receive its next card once every other column
+   already holds at least that many (`openColumnsForPlacement`) — so row 1
+   must fill across all 5 columns before any column starts row 2, and so
+   on up to the hidden row 4. This runs for 20 more placements per player
+   (40 total) until every column on both boards is full.
 3. **The hidden row:** columns fill strictly bottom-to-top (index 0 first,
    4 last), so "the last card placed in a column" is always index 4 —
    there's no ambiguity to track separately, `board.js` just treats index

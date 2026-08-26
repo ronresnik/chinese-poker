@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { initGame, placeCard, chooseSwap, getCurrentTurnUid, PHASE } from '../game/engine.js'
+import { initGame, placeCard, chooseSwap, getCurrentTurnUid, getNextCard, PHASE } from '../game/engine.js'
 import { chooseBotPlacement, chooseBotSwap } from '../game/bot.js'
 
 export const HUMAN_UID = 'you'
@@ -51,7 +51,7 @@ function runBotTurnIfNeeded(set, get) {
       const { state: current } = get()
       if (!current || current.status !== PHASE.PLACING || getCurrentTurnUid(current) !== BOT_UID) return
       const bot = current.players[BOT_UID]
-      const card = bot.hand[0] ?? current.deck[0]
+      const card = getNextCard(current)
       const col = chooseBotPlacement(bot.board, card)
       set({ state: placeCard(current, BOT_UID, col) })
       runBotTurnIfNeeded(set, get)

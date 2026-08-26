@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { initGame, placeCard, chooseSwap, getCurrentTurnUid, isGameComplete, PHASE } from './engine.js'
+import { initGame, placeCard, chooseSwap, getCurrentTurnUid, getNextCard, isGameComplete, PHASE } from './engine.js'
 import { cardCode } from './deck.js'
 import { chooseBotPlacement, chooseBotSwap } from './bot.js'
 
@@ -18,7 +18,7 @@ function playFullGame() {
     if (++guard > 1000) throw new Error('placement phase did not terminate')
     const uid = getCurrentTurnUid(state)
     const board = state.players[uid].board
-    const col = chooseBotPlacement(board, state.players[uid].hand[0] ?? state.deck[0])
+    const col = chooseBotPlacement(board, getNextCard(state))
     state = placeCard(state, uid, col)
   }
 
@@ -101,6 +101,30 @@ test('placing out of turn throws', () => {
   const state = initGame({ players: [{ uid: 'A', name: 'A' }, { uid: 'B', name: 'B' }] })
   const notTurnUid = state.order[1]
   assert.throws(() => placeCard(state, notTurnUid, 'col1'))
+})
+
+test('initGame auto-deals the initial 5 cards, one per column, before any turn is taken', () => {
+  const state = initGame({ players: [{ uid: 'A', name: 'A' }, { uid: 'B', name: 'B' }] })
+  for (const uid of ['A', 'B']) {
+    for (const col of ['col1', 'col2', 'col3', 'col4', 'col5']) {
+      assert.equal(state.players[uid].board[col].length, 1)
+      assert.equal(state.players[uid].board[col][0].faceDown, false)
+    }
+  }
+})
+
+test('cannot place into a column that is ahead of the others (row-by-row rule)', () => {
+  let state = initGame({ players: [{ uid: 'A', name: 'A' }, { uid: 'B', name: 'B' }] })
+  const uid = getCurrentTurnUid(state)
+  // row 0 is already filled for every column; place row 1 into col1...
+  state = placeCard(state, uid, 'col1')
+  // ...then it's the other player's turn, so col1 is still "ahead" for
+  // this player once it's their turn again — but we can check right away
+  // that trying to jump col1 to row 2 before finishing row 1 elsewhere
+  // throws, using the same player's next turn.
+  const otherUid = getCurrentTurnUid(state)
+  state = placeCard(state, otherUid, 'col2') // keep the other player in lockstep for this check
+  assert.throws(() => placeCard(state, uid, 'col1'))
 })
 
 test('a bot-vs-bot game is deterministic-ish and always terminates', () => {

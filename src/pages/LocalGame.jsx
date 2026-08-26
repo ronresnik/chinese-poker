@@ -35,7 +35,7 @@ export default function LocalGame() {
   }
 
   const isMyTurn = state.status === PHASE.PLACING && getCurrentTurnUid(state) === HUMAN_UID
-  const nextCard = isMyTurn ? getNextCard(state, HUMAN_UID) : null
+  const nextCard = isMyTurn ? getNextCard(state) : null
 
   return (
     <GameScreen

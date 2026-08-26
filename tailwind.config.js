@@ -56,7 +56,10 @@ export default {
         },
       },
       animation: {
-        'deal-in': 'deal-in 0.35s ease-out',
+        // backwards: with an animation-delay (staggered deals), the
+        // element holds the 0% keyframe (invisible) during the delay
+        // instead of flashing fully visible before the animation starts.
+        'deal-in': 'deal-in 0.35s ease-out backwards',
         'fold-forward': 'fold-forward 0.6s ease-in forwards',
         'pulse-gold': 'pulse-gold 1.6s ease-out infinite',
       },

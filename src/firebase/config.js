@@ -23,6 +23,26 @@ const firebaseConfig = {
 // Guard against re-initializing during Vite HMR.
 export const app = getApps().length ? getApp() : initializeApp(firebaseConfig)
 
-export const auth = getAuth(app)
-export const db = getFirestore(app)
-export const rtdb = getDatabase(app)
+// getAuth/getFirestore/getDatabase validate their piece of the config and
+// throw *synchronously* on a bad value (most notably getDatabase(), which
+// throws immediately if databaseURL is missing or malformed) — and because
+// this module is imported at the very top of main.jsx's chain, an
+// uncaught throw here aborts the entire script before React ever mounts,
+// producing a blank page with no visible error (only in devtools).
+// Single-player mode doesn't touch Firebase at all, so it shouldn't be
+// held hostage by a misconfigured env var: catch here, log clearly, and
+// let auth/db/rtdb be null — online-only features degrade to a visible
+// "unavailable" state (see useAuthStore.js, useOnlineGameStore.js)
+// instead of taking the whole app down with them.
+function safeInit(label, factory) {
+  try {
+    return factory()
+  } catch (err) {
+    console.error(`[firebase] Failed to initialize ${label} — check your VITE_FIREBASE_* config:`, err)
+    return null
+  }
+}
+
+export const auth = safeInit('Auth', () => getAuth(app))
+export const db = safeInit('Firestore', () => getFirestore(app))
+export const rtdb = safeInit('Realtime Database', () => getDatabase(app))

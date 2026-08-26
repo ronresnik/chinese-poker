@@ -56,6 +56,9 @@ rooms/{roomId}/
 
   private/{uid}/                     -- PRIVATE until showdown (see rule below)
     initialHand               card[5]           — the actual dealt starting hand
+    drawQueue                  card[20]          — this player's entire remaining draw
+                                                    sequence, pre-allocated at deal time
+                                                    (see "Why pre-allocate draws" below)
     hiddenCardByCol/
       col1..col5               { rank, suit } | null   — the real value behind board/col*/4
     swapCard                   { rank, suit } | null    — the extra card from the final 2-card split
@@ -75,17 +78,43 @@ rooms/{roomId}/
 
 - **waiting:** room created, host has set the cash-game config, waiting for
   a guest (or the guest just joined).
-- **dealing:** host deals 5 initial cards to each player; both clients
-  evaluate their own hand to determine `firstPlayerUid`.
+- **dealing:** host shuffles once and writes each player's full allocation
+  in one shot — `initialHand` (5), `drawQueue` (20), `swapCard` (1) — then
+  both clients independently evaluate their own `initialHand` to determine
+  `firstPlayerUid`. See "Why pre-allocate draws" below.
 - **placing:** the 40-card turn-based phase (20 placements per player,
-  filling rows 0-3 of all 5 columns, then row 4 face-down).
-- **swap:** the last 2 cards are dealt (1 per player); each player may swap
-  it into one of their `hiddenCardByCol` slots before locking in.
+  filling rows 0-3 of all 5 columns, then row 4 face-down) — each player
+  draws from their own already-allocated `drawQueue`, no further host
+  involvement needed.
+- **swap:** each player already holds their `swapCard` from the initial
+  allocation; they may swap it into one of their `hiddenCardByCol` slots
+  before locking in, or keep their board as is.
 - **showdown:** both players have `locked: true` — hidden cards become
   readable by the opponent (rule-enforced, see below) and the client runs
   the column-by-column reveal animation.
 - **complete:** result written to Firestore `games/{gameId}`, RTDB room can
   be cleaned up / left to expire.
+
+### Why pre-allocate draws instead of a shared `deck` path
+
+A naive design keeps one shared "remaining deck" that players draw from
+turn by turn — but the only entity that can validly reveal the *next* card
+in a shuffle it alone generated is the host (see "Trust model" below), and
+the placement phase's 40 remaining turns would then need the host to
+mediate every single draw, live, for the whole game. Instead, the host
+does its one necessary act of trust exactly once, at deal time: it splits
+its shuffle into `initialHand` (5) + `drawQueue` (20) + `swapCard` (1) per
+player — 52 cards total — and writes all of it in one shot while
+`meta/status` is `dealing`. From then on each player just pops their own
+`drawQueue` locally (a self-write, already allowed at any time) whenever
+their hand is empty on their turn. This is statistically identical to
+drawing one at a time from a single shared shuffled deck — a uniformly
+shuffled sequence's contiguous slices are exchangeable with its interleaved
+ones — it's just a different, equally fair way to read the same shuffle.
+The payoff is that the host's private-write exception only ever needs to
+open during `dealing` (initial hands + draw queues + swap cards) and
+`swap` (nothing left to deal there in this design, kept open for symmetry)
+— never during the 40-turn `placing` phase itself.
 
 ### Why row index 4 is always the hidden row
 
@@ -158,3 +187,15 @@ trusted server (a paid Cloud Functions plan) to referee:
   players' clients write independent `log` entries), but it isn't
   cryptographic proof. Upgrading to Cloud Functions (Blaze plan) would
   close this gap by having a server independently recompute the showdown.
+- **`meta/turnUid` can be written by either room member, not strictly only
+  by whoever's turn it currently is.** A precise "only the acting player
+  may hand off the turn" rule is straightforward to state but easy to get
+  subtly wrong by hand in RTDB's rules language without the emulator to
+  test against (see the Step 2 notes on why this project didn't chase that
+  level of rigor for a casual, trusted-opponent game). What *is* still
+  enforced: `turnUid` must always be one of the two real room members, and
+  every placement itself is written to that player's own board path only
+  (self-write), so the worst a malicious client can do here is grant
+  itself an extra turn, not alter the opponent's board or see their hidden
+  cards. Tightened turn-order enforcement is a reasonable follow-up once
+  the rules can be validated against the Firebase Emulator Suite.

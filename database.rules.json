@@ -98,6 +98,7 @@
               "$other": { ".validate": false }
             },
             "swapCard": { ".validate": true },
+            "drawQueue": { ".validate": "newData.hasChildren() || newData.val() === null" },
             "$other": { ".validate": false }
           }
         },

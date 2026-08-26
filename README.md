@@ -47,16 +47,23 @@ src/
 npm install
 cp .env.example .env.local   # fill in your Firebase project config
 npm run dev
-npm test                     # runs src/game/'s unit test suite (Node's built-in test runner)
+npm test                     # unit tests (Node's built-in runner)
 ```
 
 ## Game logic
 
-`src/game/` is pure, framework-free, and fully unit tested (43 tests —
-hand evaluation, the 3-2 / 4-1 / 5-0(x2) payout math, a full simulated
-game with card-conservation checks, and the AI Coach heuristics). See
-[`src/game/README.md`](src/game/README.md) for the module map and the
-exact turn-flow math the custom 5-column rules imply.
+`src/game/` is pure, framework-free, and fully unit tested (hand
+evaluation, the 3-2 / 4-1 / 5-0(x2) payout math, a full simulated game
+with card-conservation checks, showdown reveal captions, seen-card
+counting, and the AI Coach heuristics), alongside the pure parts of
+`src/firebase/`. See [`src/game/README.md`](src/game/README.md) for the
+module map and the exact turn-flow math the custom 5-column rules imply.
+
+`npm test` passes no path to Node's test runner on purpose, letting it
+discover `*.test.js` recursively (it skips `node_modules` itself). Don't
+replace that with a `**` glob argument: Node only began expanding glob
+patterns itself in v21, so a globbed script passes on a newer local Node
+and fails on an older one in CI with `Could not find 'src/**/*.test.js'`.
 
 `src/store/` wires that logic to React: `useLocalGameStore` drives
 single-player vs. the bot end-to-end (no Firebase involved), while

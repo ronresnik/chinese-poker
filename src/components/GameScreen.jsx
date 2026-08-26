@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { openColumnsForPlacement, COLUMNS } from '../game/board.js'
+import { openColumnsForPlacement, maskHiddenRow, COLUMNS } from '../game/board.js'
 import Card from './Card.jsx'
 import PlayerBoard from './PlayerBoard.jsx'
 import TurnBanner from './TurnBanner.jsx'
@@ -74,6 +74,15 @@ export default function GameScreen({
 
   const opponentUid = result ? Object.keys(result.columnsWon).find((u) => u !== myUid) : null
 
+  // The moment `status` reaches showdown/complete, both stores start
+  // feeding this component the opponent's *true* hidden card (ShowdownReveal
+  // needs it, to progressively unmask one column at a time) — but that same
+  // true board also flows into the plain PlayerBoard below, which sits right
+  // behind ShowdownReveal's fixed, near-opaque overlay. Mask it there until
+  // the player has actually clicked through the reveal, so the real values
+  // never render outside of ShowdownReveal's own controlled unmasking.
+  const displayOpponentBoard = isDone && !revealDone ? maskHiddenRow(opponentBoard) : opponentBoard
+
   return (
     <div className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-3 px-3 py-3">
       <div className="flex items-center justify-between">
@@ -84,7 +93,7 @@ export default function GameScreen({
         <CashBadge cashGame={cashGame} />
       </div>
 
-      <PlayerBoard board={opponentBoard} />
+      <PlayerBoard board={displayOpponentBoard} />
 
       <TurnBanner status={status} isMyTurn={isMyTurn} myLocked={myLocked} opponentLocked={opponentLocked} />
 

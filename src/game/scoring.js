@@ -15,6 +15,7 @@ export function evaluateShowdown(playerA, playerB) {
       col,
       handA,
       handB,
+      hands: { [playerA.uid]: handA, [playerB.uid]: handB },
       winnerUid: cmp === 0 ? null : cmp > 0 ? playerA.uid : playerB.uid,
     }
   })
@@ -25,6 +26,15 @@ export function evaluateShowdown(playerA, playerB) {
   }
 
   return { columns, columnsWon }
+}
+
+/** Per-column 'win' | 'lose' | 'tie' from the given uid's point of view — drives the showdown fold animation. */
+export function columnOutcomesFor(columns, uid) {
+  const outcomes = {}
+  for (const c of columns) {
+    outcomes[c.col] = !c.winnerUid ? 'tie' : c.winnerUid === uid ? 'win' : 'lose'
+  }
+  return outcomes
 }
 
 /**

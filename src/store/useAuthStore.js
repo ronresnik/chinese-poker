@@ -17,6 +17,13 @@ let initialized = false
 export function initAuth() {
   if (initialized) return
   initialized = true
+  if (!auth) {
+    // firebase/config.js already logged why. Online play and the
+    // leaderboard become visibly "unavailable" (see Home.jsx's
+    // onlineReady check); single-player is entirely unaffected.
+    useAuthStore.setState({ status: 'error', error: 'Firebase is not configured' })
+    return
+  }
   onAuthStateChanged(auth, async (user) => {
     if (user) {
       useAuthStore.setState({ user, status: 'ready', error: null })
@@ -31,7 +38,7 @@ export function initAuth() {
 }
 
 export async function setDisplayName(name) {
-  if (!auth.currentUser) return
+  if (!auth?.currentUser) return
   await updateProfile(auth.currentUser, { displayName: name })
   useAuthStore.setState({ user: auth.currentUser })
 }

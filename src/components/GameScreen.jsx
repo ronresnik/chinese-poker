@@ -7,6 +7,7 @@ import TurnBanner from './TurnBanner.jsx'
 import CashBadge from './CashBadge.jsx'
 import CoachTipToast from './CoachTipToast.jsx'
 import SwapBar from './SwapBar.jsx'
+import CardCounter from './CardCounter.jsx'
 import ShowdownReveal from './ShowdownReveal.jsx'
 import ShowdownModal from './ShowdownModal.jsx'
 
@@ -38,6 +39,7 @@ export default function GameScreen({
   onSwapCard,
   coachTip,
   result,
+  statsNote,
   onPlayAgain,
   onExit,
 }) {
@@ -120,6 +122,19 @@ export default function GameScreen({
 
       <div className="text-center text-sm font-medium text-white/70">{myName} (you)</div>
 
+      {(isPlacing || isSwap) && (
+        <CardCounter
+          myBoard={myBoard}
+          opponentBoard={opponentBoard}
+          // Cards this player has been shown but that aren't on a board
+          // yet. The spare swap card only counts from the swap phase, as
+          // that's when they're actually shown it — counting it earlier
+          // would quietly rule its rank out of the tally while the player
+          // has no idea why.
+          knownCards={[nextCard, isSwap ? swapCard : null].filter(Boolean)}
+        />
+      )}
+
       {isDone && result && !revealDone && (
         <ShowdownReveal
           result={result}
@@ -140,6 +155,7 @@ export default function GameScreen({
           myName={myName}
           opponentName={opponentName}
           cashGame={cashGame}
+          statsNote={statsNote}
           onPlayAgain={onPlayAgain}
           onClose={onExit}
         />

@@ -1,6 +1,15 @@
 export const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A']
 export const SUITS = ['s', 'h', 'd', 'c']
 
+// Standard high-to-low suit order (spades, hearts, diamonds, clubs), used
+// only as the final tiebreak between two otherwise exactly-equal hands so
+// a column can never be drawn — see compareHands in handEvaluator.js.
+const SUIT_VALUE = { s: 4, h: 3, d: 2, c: 1 }
+
+export function suitValue(suit) {
+  return SUIT_VALUE[suit] ?? 0
+}
+
 const RANK_VALUE = Object.fromEntries(RANKS.map((r, i) => [r, i + 2]))
 
 export function rankValue(rank) {

@@ -1,4 +1,4 @@
-import { rankValue } from './deck.js'
+import { rankValue, suitValue } from './deck.js'
 
 export const CATEGORY = {
   HIGH_CARD: 0,
@@ -43,7 +43,17 @@ export function evaluateHand(cards) {
   if (cards.length !== 5) {
     throw new Error(`evaluateHand requires exactly 5 cards, got ${cards.length}`)
   }
+  // `suits` rides along on every result purely as the last-resort
+  // tiebreak (see compareHands): the hand's suits ordered by the card
+  // they belong to, strongest card first.
+  const suits = cards
+    .slice()
+    .sort((x, y) => rankValue(y.rank) - rankValue(x.rank) || suitValue(y.suit) - suitValue(x.suit))
+    .map((c) => suitValue(c.suit))
+  return { ...classifyHand(cards), suits }
+}
 
+function classifyHand(cards) {
   const values = cards.map((c) => rankValue(c.rank)).sort((a, b) => b - a)
   const isFlush = cards.every((c) => c.suit === cards[0].suit)
 
@@ -97,12 +107,32 @@ function straightHighCard(values) {
   return values[0]
 }
 
-/** Returns 1 if a beats b, -1 if b beats a, 0 if they tie exactly. */
+/**
+ * Returns 1 if a beats b, -1 if b beats a. Never returns 0 for two real
+ * hands: a column always has a winner in this game, so once standard
+ * poker ranking comes out level the suits decide it (spades > hearts >
+ * diamonds > clubs), comparing the strongest card first.
+ *
+ * That final step can't itself end level. Equal category *and* equal
+ * tiebreak implies both hands hold the same five rank values, and both
+ * are drawn from one 52-card deck, so their suits cannot also match —
+ * that would make them literally the same five cards. With no drawn
+ * columns, and an odd five of them, a match can't end level either: the
+ * column split is always 5-0, 4-1 or 3-2, exactly the three cases the
+ * payout table covers (see calculatePayout).
+ */
 export function compareHands(a, b) {
   if (a.category !== b.category) return a.category > b.category ? 1 : -1
   for (let i = 0; i < Math.max(a.tiebreak.length, b.tiebreak.length); i++) {
     const av = a.tiebreak[i] ?? 0
     const bv = b.tiebreak[i] ?? 0
+    if (av !== bv) return av > bv ? 1 : -1
+  }
+  const aSuits = a.suits ?? []
+  const bSuits = b.suits ?? []
+  for (let i = 0; i < Math.max(aSuits.length, bSuits.length); i++) {
+    const av = aSuits[i] ?? 0
+    const bv = bSuits[i] ?? 0
     if (av !== bv) return av > bv ? 1 : -1
   }
   return 0

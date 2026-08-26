@@ -56,10 +56,18 @@ service cloud.firestore {
     match /games/{gameId} {
       allow read: if isSignedIn();
 
+      // winnerUid is read from the TOP level of the document (the client
+      // writes it both here and inside `result` — see
+      // useLeaderboardStore.js). It is null for a tied match, which is a
+      // legitimate outcome and must not be rejected; a null winner simply
+      // can't authorize any gamesWon increment in the users rule above.
       allow create: if isSignedIn()
         && request.auth.uid in request.resource.data.players
         && request.resource.data.players.size() == 2
-        && request.resource.data.winnerUid in request.resource.data.players;
+        && (
+          request.resource.data.winnerUid == null
+          || request.resource.data.winnerUid in request.resource.data.players
+        );
 
       allow update, delete: if false;
     }

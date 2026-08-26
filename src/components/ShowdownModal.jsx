@@ -1,7 +1,32 @@
+import clsx from 'clsx'
 import { describeHand } from '../game/handEvaluator.js'
 import { formatCurrency } from '../utils/format.js'
 
-export default function ShowdownModal({ result, myUid, myName, opponentName, cashGame, onClose, onPlayAgain }) {
+const TONE = {
+  win: 'text-win',
+  lose: 'text-red-300',
+  tie: 'text-white/50',
+}
+
+function HandRow({ name, hand, tone }) {
+  return (
+    <div className="mt-1 flex items-baseline justify-between gap-3">
+      <span className="shrink-0 truncate text-[11px] text-white/40">{name}</span>
+      <span className={clsx('text-right font-medium', TONE[tone])}>{describeHand(hand)}</span>
+    </div>
+  )
+}
+
+export default function ShowdownModal({
+  result,
+  myUid,
+  myName,
+  opponentName,
+  cashGame,
+  statsNote,
+  onClose,
+  onPlayAgain,
+}) {
   if (!result) return null
 
   const iWon = result.winnerUid === myUid
@@ -27,25 +52,53 @@ export default function ShowdownModal({ result, myUid, myName, opponentName, cas
           </p>
         )}
 
-        <ul className="mt-4 space-y-1 text-xs sm:text-sm">
-          {result.columns.map((c, i) => (
-            <li key={c.col} className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-1.5">
-              <span className="text-white/50">Column {i + 1}</span>
-              <span
-                className={
-                  c.winnerUid === myUid
-                    ? 'font-semibold text-win'
-                    : c.winnerUid
-                      ? 'text-red-300'
-                      : 'text-white/50'
-                }
+        {/* Every column shows BOTH hands, always — the point of the
+            summary is to see why each column went the way it did, which
+            you can't tell from your own hand alone. Green is the hand
+            that took the column, red the one that lost it. */}
+        <ul className="mt-4 max-h-[45vh] space-y-2 overflow-y-auto text-xs sm:text-sm">
+          {result.columns.map((c, i) => {
+            const iWonCol = c.winnerUid === myUid
+            const tied = !c.winnerUid
+            return (
+              <li
+                key={c.col}
+                className={clsx(
+                  'rounded-lg border-l-4 bg-white/5 px-3 py-2',
+                  tied ? 'border-white/30' : iWonCol ? 'border-win' : 'border-red-400',
+                )}
               >
-                {describeHand(c.hands[myUid])}
-                {c.winnerUid && c.winnerUid !== myUid ? ' (lost)' : ''}
-              </span>
-            </li>
-          ))}
+                <div className="flex items-center justify-between">
+                  <span className="text-white/50">Column {i + 1}</span>
+                  <span
+                    className={clsx(
+                      'text-[11px] font-bold uppercase tracking-wide',
+                      tied ? 'text-white/40' : iWonCol ? 'text-win' : 'text-red-300',
+                    )}
+                  >
+                    {tied ? 'Tie' : iWonCol ? 'Won' : 'Lost'}
+                  </span>
+                </div>
+                <HandRow
+                  name={`${myName} (you)`}
+                  hand={c.hands[myUid]}
+                  tone={tied ? 'tie' : iWonCol ? 'win' : 'lose'}
+                />
+                <HandRow
+                  name={opponentName}
+                  hand={c.hands[oppUid]}
+                  tone={tied ? 'tie' : iWonCol ? 'lose' : 'win'}
+                />
+              </li>
+            )
+          })}
         </ul>
+
+        {statsNote && (
+          <p className="mt-3 text-center text-[11px] leading-snug text-white/30">
+            The result above is final — only the leaderboard update didn&rsquo;t go through ({statsNote}).
+          </p>
+        )}
 
         <div className="mt-5 flex gap-3">
           <button type="button" onClick={onPlayAgain} className="btn-gold flex-1">

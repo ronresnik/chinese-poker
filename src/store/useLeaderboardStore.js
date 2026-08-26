@@ -45,6 +45,10 @@ export async function ensureUserProfile(uid, displayName) {
   return profile
 }
 
+// Returns null rather than throwing when the host's match record never
+// lands. Nothing about a finished game depends on the leaderboard, so a
+// missing record must degrade to "stats not counted", never to an error
+// that replaces the player's result screen (see recordGameResult).
 async function waitForGameDoc(gameId, attempts = 5) {
   const gameRef = doc(db, 'games', gameId)
   for (let i = 0; i < attempts; i++) {
@@ -52,7 +56,7 @@ async function waitForGameDoc(gameId, attempts = 5) {
     if (snap.exists()) return snap
     await new Promise((resolve) => setTimeout(resolve, 300 * (i + 1)))
   }
-  throw new Error(`games/${gameId} was not created in time — stats update skipped`)
+  return null
 }
 
 /**
@@ -79,18 +83,30 @@ export async function recordGameResult({
     await setDoc(doc(db, 'games', gameId), {
       players: [myUid, opponentUid],
       playerNames: { [myUid]: myName, [opponentUid]: opponentName },
+      // winnerUid has to sit at the TOP level, not only inside `result`:
+      // firestore.rules validates `request.resource.data.winnerUid in
+      // request.resource.data.players` on create, and the users/{uid}
+      // rule reads `get(games/$(lastGameId)).data.winnerUid` to authorize
+      // a gamesWon increment. Writing it only under `result` made both
+      // reads undefined, so every match record was rejected and the
+      // games collection stayed permanently empty.
+      winnerUid: result.winnerUid ?? null,
       cashGame,
       result: {
         columnsWon: result.columnsWon,
-        winnerUid: result.winnerUid,
+        winnerUid: result.winnerUid ?? null,
         sweep: result.sweep,
         payout: result.payout,
       },
       startedAt: serverTimestamp(),
       endedAt: serverTimestamp(),
     })
-  } else {
-    await waitForGameDoc(gameId)
+  } else if (!(await waitForGameDoc(gameId))) {
+    // The host never wrote the record (offline, closed the tab, or the
+    // Firestore rules aren't published). Their own stats still count;
+    // ours simply can't, because the rules require the match record to
+    // exist before a win can be claimed.
+    return { recorded: false, reason: 'match record was never created by the host' }
   }
 
   await ensureUserProfile(myUid, myName)
@@ -110,4 +126,6 @@ export async function recordGameResult({
       },
     })
   })
+
+  return { recorded: true }
 }

@@ -28,7 +28,13 @@ export function evaluateShowdown(playerA, playerB) {
   return { columns, columnsWon }
 }
 
-/** Per-column 'win' | 'lose' | 'tie' from the given uid's point of view — drives the showdown fold animation. */
+/**
+ * Per-column 'win' | 'lose' | 'tie' from the given uid's point of view —
+ * drives the showdown's colour treatment (see ColumnStack). 'tie' is
+ * unreachable in normal play, since compareHands settles every level
+ * column on suit, but is kept so a winner-less column can never be
+ * silently rendered as a loss.
+ */
 export function columnOutcomesFor(columns, uid) {
   const outcomes = {}
   for (const c of columns) {

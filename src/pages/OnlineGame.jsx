@@ -162,6 +162,7 @@ export default function OnlineGame() {
       onSwapCard={store.swap}
       coachTip={store.lastCoachTip}
       result={store.result}
+      statsNote={store.statsNote}
       onPlayAgain={() => {
         store.leave()
         navigate('/')

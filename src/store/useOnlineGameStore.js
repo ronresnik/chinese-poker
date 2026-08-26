@@ -92,6 +92,9 @@ const initialState = {
   result: null,
   lastCoachTip: null,
   error: null,
+  // Non-fatal: the leaderboard/stats write didn't go through. Shown as a
+  // footnote on the result screen, never as an error page.
+  statsNote: null,
 }
 
 // meta and players are subscribed separately (see firebase/rooms.js for
@@ -248,6 +251,14 @@ export const useOnlineGameStore = create((set, get) => ({
 
     set({ room, opponentUid, cashGame: room.meta.cashGame, turnUid: room.meta.turnUid ?? null, status: room.meta.status })
 
+    // Both display names come from the room itself, which is the only
+    // copy both devices agree on. Taking our own name from here too
+    // matters on a resume: a reload has no navigation state to carry the
+    // name the player originally typed, so without this they'd show up
+    // to themselves as the fallback "Player" mid-game.
+    const myNameFromRoom = room.players?.[myUid]?.displayName
+    if (myNameFromRoom && myNameFromRoom !== get().myName) set({ myName: myNameFromRoom })
+
     const myPublicBoard = normalizeBoard(room.players?.[myUid]?.board)
     const opponentPublicBoard = opponentUid ? normalizeBoard(room.players?.[opponentUid]?.board) : normalizeBoard()
     set({
@@ -386,7 +397,16 @@ export const useOnlineGameStore = create((set, get) => ({
       opponentName: room.players?.[opponentUid]?.displayName ?? 'Opponent',
       cashGame: room.meta.cashGame,
       result,
-    }).catch((err) => set({ error: err.message }))
+    })
+      .then((outcome) => {
+        if (outcome && outcome.recorded === false) set({ statsNote: outcome.reason })
+      })
+      // Deliberately NOT `set({ error })`: the leaderboard is bookkeeping
+      // that happens after the game is already decided and on screen, and
+      // routing its failures into the fatal error state replaced the
+      // finished game — result, payout and all — with an error page. The
+      // game itself needs nothing from Firestore.
+      .catch((err) => set({ statsNote: err.message }))
   },
 
   leave() {

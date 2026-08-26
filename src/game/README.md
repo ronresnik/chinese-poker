@@ -42,6 +42,8 @@ is what pins down the turn flow precisely:
 - `board.js` — the 5-column board: placement, fullness, the face-down rule.
 - `turnOrder.js` — initial-hand evaluation -> first player.
 - `scoring.js` — showdown comparison + the 3-2 / 4-1 / 5-0(x2) payout math.
+- `reveal.js` — the caption for the column-by-column showdown reveal.
+- `cardCounting.js` — per-rank "what haven't I seen yet" tally.
 - `swap.js` — applying a swap, and evaluating swap options for the coach/bot.
 - `aiCoach.js` — heuristic "how sound was that move" tips for placements
   and swaps. Statistical, not a trained model — see the file for the method.
@@ -60,3 +62,37 @@ into view. This engine always holds full, real card data for both players
 (there's no one to hide it from inside a single process), which keeps it
 simple to test; `store/` is what decides what a given client actually gets
 to see.
+
+## No column is ever drawn
+
+Standard poker ranks two hands with the same five rank values as a tie.
+This game doesn't have ties: `compareHands` falls through to the suits
+(spades > hearts > diamonds > clubs), comparing the strongest card first.
+That last step can't itself end level — equal category *and* equal
+tiebreak means both hands hold the same five rank values, and with one
+52-card deck their suits can't match too without being literally the same
+cards.
+
+Two consequences worth knowing:
+
+- A match can't end level either. Five columns, none drawn, so the split
+  is always 5-0, 4-1 or 3-2 — exactly the three cases the payout table in
+  `scoring.js` covers.
+- `columnOutcomesFor` and `reveal.js` still handle a winner-less column.
+  It's unreachable, but the fallback keeps a drawn column from being
+  silently reported to both players as a loss if that ever changes.
+
+## Counting what a player has seen
+
+`cardCounting.js` answers "how many of each rank are still unaccounted
+for" *from one player's seat*, which is why the two players legitimately
+see different numbers: each can see their own face-down final row and not
+their opponent's.
+
+The final row is the case that needs care. Once it begins, the opponent
+commits five cards this player cannot identify. They're off the table,
+but their ranks are unknown, so subtracting them from any particular rank
+would invent information the player doesn't have. They stay in the unseen
+pool and are reported separately as `unknownOnTable`, which is what lets
+the UI say how much of that pool is already face-down rather than still
+to come.

@@ -97,10 +97,16 @@ test('compareHands: same category, tiebreak decides', () => {
   assert.equal(compareHands(kingsUp, queensUp), 1)
 })
 
-test('compareHands: exact tie', () => {
+test('hands level on rank are broken by suit rather than left tied', () => {
+  // Identical two pair (Kings and 4s, 9 kicker) on both sides. Standard
+  // poker calls this a tie; this game has none, so the suits decide it —
+  // b holds the spade King, the strongest card between them.
   const a = evaluateHand(cards(['Kh', 'Kd', '4s', '4c', '9h']))
   const b = evaluateHand(cards(['Ks', 'Kc', '4h', '4d', '9s']))
-  assert.equal(compareHands(a, b), 0)
+  assert.equal(a.category, b.category)
+  assert.deepEqual(a.tiebreak, b.tiebreak)
+  assert.equal(compareHands(a, b), -1)
+  assert.equal(compareHands(b, a), 1)
 })
 
 test('every 5-card combo from a full deck evaluates without throwing', () => {
@@ -121,4 +127,28 @@ test('every 5-card combo from a full deck evaluates without throwing', () => {
     const evaluated = evaluateHand(hand)
     assert.ok(evaluated.category >= 0 && evaluated.category <= 8)
   }
+})
+
+test('two rank-identical hands are still separated, by suit — a column can never be drawn', () => {
+  // Same five ranks on both sides, different suits: standard poker calls
+  // this a tie, but this game has no ties (see compareHands).
+  const a = evaluateHand(cards(['As', 'Ks', 'Qs', 'Js', '9s']))
+  const b = evaluateHand(cards(['Ah', 'Kh', 'Qh', 'Jh', '9h']))
+  assert.equal(a.category, b.category)
+  assert.deepEqual(a.tiebreak, b.tiebreak)
+  // Spades outrank hearts on the strongest card.
+  assert.equal(compareHands(a, b), 1)
+  assert.equal(compareHands(b, a), -1)
+})
+
+test('the suit tiebreak only applies once ranks are exhausted', () => {
+  // A club Ace-high beats a spade King-high: rank still decides first.
+  const clubsHigh = evaluateHand(cards(['Ac', '8d', '6h', '4s', '2c']))
+  const spadesLow = evaluateHand(cards(['Ks', 'Qs', '9d', '5h', '3c']))
+  assert.equal(compareHands(clubsHigh, spadesLow), 1)
+})
+
+test('comparing a hand with itself is the only case that can still return 0', () => {
+  const hand = evaluateHand(cards(['As', 'Ks', 'Qs', 'Js', '9s']))
+  assert.equal(compareHands(hand, hand), 0)
 })

@@ -46,10 +46,6 @@ export default {
           '0%': { opacity: '0', transform: 'translateY(-40px) scale(0.8)' },
           '100%': { opacity: '1', transform: 'translateY(0) scale(1)' },
         },
-        'fold-forward': {
-          '0%': { transform: 'rotateX(0deg) translateY(0)', opacity: '1' },
-          '100%': { transform: 'rotateX(-100deg) translateY(30px)', opacity: '0.35' },
-        },
         'pulse-gold': {
           '0%, 100%': { boxShadow: '0 0 0 0 rgba(212,175,55,0.5)' },
           '50%': { boxShadow: '0 0 0 8px rgba(212,175,55,0)' },
@@ -60,21 +56,9 @@ export default {
         // element holds the 0% keyframe (invisible) during the delay
         // instead of flashing fully visible before the animation starts.
         'deal-in': 'deal-in 0.35s ease-out backwards',
-        'fold-forward': 'fold-forward 0.6s ease-in forwards',
         'pulse-gold': 'pulse-gold 1.6s ease-out infinite',
       },
     },
   },
-  plugins: [
-    // Lightweight utilities for the 3D column-fold showdown animation
-    // (CSS perspective / transform-style aren't covered by core Tailwind).
-    function ({ addUtilities }) {
-      addUtilities({
-        '.perspective-800': { perspective: '800px' },
-        '.perspective-1200': { perspective: '1200px' },
-        '.preserve-3d': { transformStyle: 'preserve-3d' },
-        '.backface-hidden': { backfaceVisibility: 'hidden' },
-      })
-    },
-  ],
+  plugins: [],
 }

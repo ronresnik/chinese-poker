@@ -14,10 +14,24 @@ export function setupPresence(roomId, uid) {
   onDisconnect(connectedRef).set(false)
 }
 
+/**
+ * Every function below writes in a strict sequence of separate update()
+ * calls whenever a later field's rule needs to check an earlier one via a
+ * root.child() cross-reference (e.g. "is meta/status already 'dealing'?").
+ * Each write only ever depends on state a *prior, already-committed* call
+ * put there — never on a sibling field being written in the same call.
+ * Deliberately not relying on Firebase resolving cross-path root
+ * references against an in-flight multi-location update, since that
+ * couldn't be verified against a live project/emulator in development
+ * (see docs/firebase-schema.md and README's testing notes) and getting it
+ * wrong here means every write in the game fails closed with
+ * PERMISSION_DENIED — worth the extra round trips to not depend on it.
+ */
+
 export async function createRoom({ roomId, hostUid, hostName, cashGame }) {
+  await update(ref(rtdb), { [`rooms/${roomId}/meta/hostUid`]: hostUid })
+  await update(ref(rtdb), { [`rooms/${roomId}/meta/status`]: 'waiting' })
   await update(ref(rtdb), {
-    [`rooms/${roomId}/meta/hostUid`]: hostUid,
-    [`rooms/${roomId}/meta/status`]: 'waiting',
     [`rooms/${roomId}/meta/cashGame`]: cashGame,
     [`rooms/${roomId}/meta/createdAt`]: serverTimestamp(),
     [`rooms/${roomId}/meta/updatedAt`]: serverTimestamp(),
@@ -30,8 +44,8 @@ export async function createRoom({ roomId, hostUid, hostName, cashGame }) {
 }
 
 export async function joinRoom({ roomId, guestUid, guestName }) {
+  await update(ref(rtdb), { [`rooms/${roomId}/meta/guestUid`]: guestUid })
   await update(ref(rtdb), {
-    [`rooms/${roomId}/meta/guestUid`]: guestUid,
     [`rooms/${roomId}/meta/updatedAt`]: serverTimestamp(),
     [`rooms/${roomId}/players/${guestUid}/displayName`]: guestName,
     [`rooms/${roomId}/players/${guestUid}/connected`]: true,
@@ -42,22 +56,17 @@ export async function joinRoom({ roomId, guestUid, guestName }) {
 }
 
 /**
- * Host-only. One atomic multi-path update writes meta/status="dealing"
- * together with both players' private allocations in the SAME call — RTDB
- * evaluates a multi-location update's rules against the fully-merged
- * post-update tree, so this is what lets database.rules.json's host
- * exception (which is gated on status being "dealing") actually apply to
- * the private/{guestUid} write happening here. See docs/firebase-schema.md.
- *
- * Each player's own client is responsible for publishing its own
- * `players/{uid}/initialHandRank` once it can read its own private hand
- * (self-write, no rule exception needed) — see publishInitialHandRank
+ * Host-only. Each player's own client is responsible for publishing its
+ * own `players/{uid}/initialHandRank` once it can read its own private
+ * hand (self-write, no rule exception needed) — see publishInitialHandRank
  * below and useOnlineGameStore.js.
  */
 export async function dealRoom({ roomId, hostUid, guestUid }) {
   const { plan } = buildDealPlan(hostUid, guestUid)
 
-  const dealUpdates = { [`rooms/${roomId}/meta/status`]: 'dealing' }
+  await update(ref(rtdb), { [`rooms/${roomId}/meta/status`]: 'dealing' })
+
+  const dealUpdates = {}
   for (const uid of [hostUid, guestUid]) {
     dealUpdates[`rooms/${roomId}/private/${uid}/initialHand`] = plan[uid].initialHand
     dealUpdates[`rooms/${roomId}/private/${uid}/drawQueue`] = plan[uid].drawQueue
@@ -111,6 +120,10 @@ export async function publishInitialHandRank(roomId, uid, initialHand) {
  * lands at — the caller (useOnlineGameStore) derives this from the
  * player's current public board length, since that's the same number both
  * this write and database.rules.json's shape validation agree on.
+ *
+ * Safe to combine in one call: none of these fields' rules cross-reference
+ * a sibling field written here (status/turnUid rules only check
+ * meta/hostUid + meta/guestUid, which are stable/unmodified by this call).
  */
 export async function placeCardOnline({ roomId, uid, opponentTurnUid, col, card, nextIndex, bothBoardsFull }) {
   // Cards are already claimed in usedCards once, at deal time (dealRoom) —
@@ -151,10 +164,15 @@ export async function chooseSwapOnline({ roomId, uid, col, swapCard, bothLocked 
   if (col) {
     updates[`rooms/${roomId}/private/${uid}/hiddenCardByCol/${col}`] = { rank: swapCard.rank, suit: swapCard.suit }
   }
-  if (bothLocked) {
-    updates[`rooms/${roomId}/meta/status`] = 'showdown'
-  }
   await update(ref(rtdb), updates)
+
+  if (bothLocked) {
+    // Separate, later call: the showdown transition's .validate checks
+    // BOTH players' players/*/locked via root.child() — including this
+    // player's own, just committed above — so it needs to see
+    // already-persisted state, not a sibling write in the same update.
+    await update(ref(rtdb), { [`rooms/${roomId}/meta/status`]: 'showdown' })
+  }
 }
 
 export async function markComplete(roomId) {

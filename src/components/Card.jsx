@@ -1,7 +1,5 @@
 import clsx from 'clsx'
-
-const SUIT_SYMBOL = { s: '♠', h: '♥', d: '♦', c: '♣' }
-const SUIT_COLOR = { s: 'text-ink', h: 'text-red-600', c: 'text-ink', d: 'text-red-600' }
+import { SUIT_SYMBOL, SUIT_COLOR } from './suitDisplay.js'
 
 const SIZE = {
   sm: 'w-8 h-11 text-[10px] rounded-md',

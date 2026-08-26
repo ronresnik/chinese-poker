@@ -1,20 +1,29 @@
 import clsx from 'clsx'
-import { RANKS } from '../game/deck.js'
+import { RANKS, SUITS } from '../game/deck.js'
 import { countRemaining } from '../game/cardCounting.js'
+import { SUIT_SYMBOL, SUIT_COLOR_ON_DARK } from './suitDisplay.js'
 
 /**
- * A per-rank tally of what this player has not yet seen. Built from their
- * own view of the table (see game/cardCounting.js), so the two players
- * legitimately read different numbers — each can see their own final row
- * and not their opponent's.
+ * A per-rank AND per-suit tally of what this player has not yet seen.
+ * Built from their own view of the table (see game/cardCounting.js), so
+ * the two players legitimately read different numbers — each can see
+ * their own final row and not their opponent's.
+ *
+ * Rendered unconditionally by GameScreen for the whole game (not gated
+ * to the placing/swap phases) so both players always see the identical
+ * kind of information at the same time — see GameScreen.jsx.
  *
  * The footnote is the important part once the last row starts: those
  * cards are committed but unreadable, so they can't be deducted from any
- * particular rank and instead stay in the unseen pool with a plain note
- * saying how many of it is already face-down on the table.
+ * particular rank or suit and instead stay in the unseen pool with a
+ * plain note saying how many of it is already face-down on the table.
  */
 export default function CardCounter({ myBoard, opponentBoard, knownCards = [] }) {
-  const { remaining, unseenTotal, unknownOnTable } = countRemaining({ myBoard, opponentBoard, knownCards })
+  const { remaining, remainingBySuit, unseenTotal, unknownOnTable } = countRemaining({
+    myBoard,
+    opponentBoard,
+    knownCards,
+  })
 
   return (
     <div className="rounded-xl bg-white/5 px-2 py-2">
@@ -41,6 +50,25 @@ export default function CardCounter({ myBoard, opponentBoard, knownCards = [] })
                   left === 0 ? 'text-white/25' : left === 1 ? 'text-gold-light' : 'text-white',
                 )}
               >
+                {left}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="mt-1 grid grid-cols-4 gap-0.5">
+        {SUITS.map((suit) => {
+          const left = remainingBySuit[suit]
+          return (
+            <div
+              key={suit}
+              className={clsx('flex items-center justify-center gap-1 rounded py-0.5', left === 0 ? 'bg-white/5' : 'bg-black/20')}
+            >
+              <span className={clsx('text-xs leading-none', left === 0 ? 'text-white/25' : SUIT_COLOR_ON_DARK[suit])}>
+                {SUIT_SYMBOL[suit]}
+              </span>
+              <span className={clsx('text-[11px] font-bold leading-none', left === 0 ? 'text-white/25' : 'text-white')}>
                 {left}
               </span>
             </div>

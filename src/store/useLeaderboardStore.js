@@ -31,6 +31,21 @@ export const useLeaderboardStore = create((set) => ({
   },
 }))
 
+// A fresh Firestore auto-id for a vs-computer match record. Online rooms
+// reuse their RTDB roomId as the games/{gameId} key (see recordGameResult
+// below); a local game has no room, so it needs its own id the same
+// shape Firestore already knows how to generate.
+//
+// Returns null rather than throwing if Firestore itself isn't configured
+// (db is null — see firebase/config.js's safeInit). Single-player vs. the
+// computer must work on a device with no Firebase config at all; this is
+// called unconditionally from LocalGame.jsx's very first render, so it
+// can never be the thing that takes that guarantee down.
+export function newLocalGameId() {
+  if (!db) return null
+  return doc(collection(db, 'games')).id
+}
+
 export async function ensureUserProfile(uid, displayName) {
   const ref = doc(db, 'users', uid)
   const snap = await getDoc(ref)
@@ -60,14 +75,21 @@ async function waitForGameDoc(gameId, attempts = 5) {
 }
 
 /**
- * Called independently by EACH client once it observes the room has
- * reached "complete" — every write here is scoped to that caller's own
- * uid, which is what firestore.rules actually allows (see
- * docs/firebase-schema.md). Only the room host writes the shared,
+ * Records one finished game — online or vs-computer alike, see
+ * useLocalGameStore.js/LocalGame.jsx and useOnlineGameStore.js for the two
+ * callers. Online, this runs independently on EACH client once it
+ * observes the room has reached "complete"; every write here is scoped to
+ * that caller's own uid, which is what firestore.rules actually allows
+ * (see docs/firebase-schema.md). Only the room host writes the shared,
  * immutable `games/{gameId}` match record, to avoid two clients racing to
  * create the same doc; the non-host briefly waits for it to land before
  * bumping its own stats, since the rules require that record to already
  * exist and name the winner before a gamesWon increment is allowed.
+ *
+ * A vs-computer game has only one real client, so it always takes the
+ * `isHost: true` path — structurally the same write (`players` just
+ * includes the bot's constant uid rather than a second real player), so
+ * no rule or code path here needs to know which kind of game this was.
  */
 export async function recordGameResult({
   gameId,

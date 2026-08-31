@@ -1,7 +1,7 @@
 import clsx from 'clsx'
 import { RANKS, SUITS } from '../game/deck.js'
 import { countRemaining } from '../game/cardCounting.js'
-import { SUIT_SYMBOL, SUIT_COLOR_ON_DARK } from './suitDisplay.js'
+import { SUIT_SYMBOL, SUIT_COLOR_ON_DARK, rankDisplay } from './suitDisplay.js'
 
 /**
  * A per-rank AND per-suit tally of what this player has not yet seen.
@@ -43,7 +43,7 @@ export default function CardCounter({ myBoard, opponentBoard, knownCards = [] })
                 left === 0 ? 'bg-white/5 text-white/25' : 'bg-black/20',
               )}
             >
-              <span className="text-[10px] font-bold leading-none text-white/60">{rank}</span>
+              <span className="text-[10px] font-bold leading-none text-white/60">{rankDisplay(rank)}</span>
               <span
                 className={clsx(
                   'mt-0.5 text-[11px] font-bold leading-none',

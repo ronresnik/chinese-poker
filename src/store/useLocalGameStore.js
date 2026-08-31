@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { initGame, placeCard, chooseSwap, getCurrentTurnUid, getNextCard, PHASE } from '../game/engine.js'
 import { chooseBotPlacement, chooseBotSwap } from '../game/bot.js'
+import { maskHiddenRow } from '../game/board.js'
 
 export const HUMAN_UID = 'you'
 export const BOT_UID = 'bot'
@@ -52,7 +53,12 @@ function runBotTurnIfNeeded(set, get) {
       if (!current || current.status !== PHASE.PLACING || getCurrentTurnUid(current) !== BOT_UID) return
       const bot = current.players[BOT_UID]
       const card = getNextCard(current)
-      const col = chooseBotPlacement(bot.board, card)
+      // Masked exactly like a real opponent's board would be: the bot's
+      // own placement choice must not see the human's still-hidden final
+      // row either, or its "coach"-derived heuristic would be reasoning
+      // from cards it has no legitimate way to know (see engine.js).
+      const humanBoardAsSeenByBot = maskHiddenRow(current.players[HUMAN_UID].board)
+      const col = chooseBotPlacement(bot.board, card, humanBoardAsSeenByBot)
       set({ state: placeCard(current, BOT_UID, col) })
       runBotTurnIfNeeded(set, get)
     }, BOT_MOVE_DELAY_MS)

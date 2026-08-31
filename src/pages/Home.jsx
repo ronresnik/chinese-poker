@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/useAuthStore.js'
 import { useOnlineGameStore } from '../store/useOnlineGameStore.js'
+import { sanitizeRoomCode, ROOM_CODE_LENGTH } from '../firebase/roomEntry.js'
 import ErrorReport from '../components/ErrorReport.jsx'
 
 const CURRENCIES = ['USD', 'NIS', 'EUR', 'GBP']
@@ -22,9 +23,26 @@ export default function Home() {
   const [error, setError] = useState(null)
 
   const cashGame = { enabled: cashEnabled, valuePerColumn: Number(value) || 0, currency }
-  const playerName = name.trim() || 'Player'
+  const playerName = name.trim()
+  const NAME_REQUIRED_MESSAGE = 'Please enter your name before playing — every game needs to know who you are.'
+
+  // Checked before every one of the three ways to start a game (local,
+  // host, join), rather than only disabling the buttons: a disabled
+  // button with no explanation just looks broken, and this is the one
+  // validation on this whole screen a player can actually fix themselves.
+  function requireName() {
+    if (playerName) return true
+    setError(NAME_REQUIRED_MESSAGE)
+    return false
+  }
+
+  function handlePlayLocal() {
+    if (!requireName()) return
+    navigate('/local', { state: { name: playerName, cashGame } })
+  }
 
   async function handleHost() {
+    if (!requireName()) return
     setBusy(true)
     setError(null)
     try {
@@ -38,11 +56,18 @@ export default function Home() {
 
   async function handleJoin(e) {
     e.preventDefault()
+    if (!requireName()) return
     setBusy(true)
     setError(null)
+    // Sanitized once, here, and used for BOTH the join call and the
+    // navigation target — using the raw typed input for the URL while
+    // the store attaches under the sanitized code would make
+    // OnlineGame.jsx's `store.roomId !== roomId` check fail even for a
+    // join that actually succeeded.
+    const code = sanitizeRoomCode(joinCode)
     try {
-      await joinGame({ roomId: joinCode.trim(), uid: user.uid, name: playerName })
-      navigate(`/online/${joinCode.trim()}`, { state: { name: playerName } })
+      await joinGame({ roomId: code, uid: user.uid, name: playerName })
+      navigate(`/online/${code}`, { state: { name: playerName } })
     } catch (err) {
       setError(err.message)
       setBusy(false)
@@ -63,10 +88,17 @@ export default function Home() {
           <span className="text-white/70">Your name</span>
           <input
             value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Player"
+            onChange={(e) => {
+              setName(e.target.value)
+              if (error === NAME_REQUIRED_MESSAGE) setError(null)
+            }}
+            placeholder="Enter your name"
             maxLength={20}
-            className="rounded-lg border border-white/10 bg-ink px-3 py-2 text-white outline-none focus:border-gold/60"
+            aria-invalid={error === NAME_REQUIRED_MESSAGE}
+            className={
+              'rounded-lg border bg-ink px-3 py-2 text-white outline-none focus:border-gold/60 ' +
+              (error === NAME_REQUIRED_MESSAGE ? 'border-red-500/60' : 'border-white/10')
+            }
           />
         </label>
 
@@ -135,11 +167,7 @@ export default function Home() {
       )}
 
       <div className="flex flex-col gap-3">
-        <button
-          type="button"
-          className="btn-gold"
-          onClick={() => navigate('/local', { state: { name: playerName, cashGame } })}
-        >
+        <button type="button" className="btn-gold" onClick={handlePlayLocal}>
           Play vs. Computer
         </button>
 
@@ -155,11 +183,14 @@ export default function Home() {
           <form onSubmit={handleJoin} className="flex gap-2">
             <input
               value={joinCode}
-              onChange={(e) => setJoinCode(e.target.value)}
-              placeholder="Room code"
-              className="flex-1 rounded-lg border border-white/10 bg-ink px-3 py-2 text-white outline-none focus:border-gold/60"
+              onChange={(e) => setJoinCode(sanitizeRoomCode(e.target.value).slice(0, ROOM_CODE_LENGTH))}
+              placeholder="0000"
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={ROOM_CODE_LENGTH}
+              className="w-28 flex-1 rounded-lg border border-white/10 bg-ink px-3 py-2 text-center font-mono text-lg tracking-[0.3em] text-white outline-none focus:border-gold/60"
             />
-            <button type="submit" className="btn-gold" disabled={busy || !joinCode.trim()}>
+            <button type="submit" className="btn-gold" disabled={busy || joinCode.length !== ROOM_CODE_LENGTH}>
               Join
             </button>
           </form>

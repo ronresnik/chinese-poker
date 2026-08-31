@@ -12,6 +12,20 @@
  * room's own host, which is what happens on every reload of a host's tab.
  */
 
+// Codes are 4 digits (see firebase/rooms.js's newRoomId). Strips anything
+// a player might have pasted alongside them — a space, a stray "please
+// join!" — rather than rejecting the whole string over it. Exported so
+// the UI (Home.jsx) can navigate using the exact same id the store
+// actually attaches to (see useOnlineGameStore.js's _enterRoom) — using
+// the raw, un-sanitized input for the URL while the store used the
+// sanitized one would make OnlineGame.jsx's `store.roomId !== roomId`
+// check fail even for a successful join.
+export function sanitizeRoomCode(input) {
+  return String(input ?? '').replace(/\D/g, '')
+}
+
+export const ROOM_CODE_LENGTH = 4
+
 export const RESUME_HOST = 'resume-host'
 export const RESUME_GUEST = 'resume-guest'
 export const TAKE_SEAT = 'take-seat'

@@ -1,5 +1,12 @@
 import { createShuffledDeck } from './deck.js'
-import { createEmptyBoard, isBoardFull, dealInitialRow, openColumnsForPlacement, placeCard as placeCardOnBoard } from './board.js'
+import {
+  createEmptyBoard,
+  isBoardFull,
+  dealInitialRow,
+  openColumnsForPlacement,
+  placeCard as placeCardOnBoard,
+  maskHiddenRow,
+} from './board.js'
 import { determineFirstPlayer } from './turnOrder.js'
 import { evaluateShowdown, calculatePayout } from './scoring.js'
 import { applySwap } from './swap.js'
@@ -89,7 +96,16 @@ export function placeCard(state, uid, col) {
   const card = state.deck[0]
   const deck = state.deck.slice(1)
 
-  const coachTip = coachTipForPlacement(player.board, card, col)
+  // The coach reasons about only what `uid` could legitimately see — this
+  // engine keeps true data for both players internally (see
+  // game/README.md), so the opponent's own still-hidden final row is
+  // explicitly masked here, exactly as it would be if this were the
+  // opponent's real device. This runs for the bot's own turn too (see
+  // useLocalGameStore.js), so it's what keeps the bot from quietly
+  // cheating off cards it has no way to actually know.
+  const otherUid = state.order.find((u) => u !== uid)
+  const opponentBoard = maskHiddenRow(state.players[otherUid].board)
+  const coachTip = coachTipForPlacement(player.board, card, col, opponentBoard)
   const newBoard = placeCardOnBoard(player.board, col, card)
   const placedCard = newBoard[col][newBoard[col].length - 1]
 

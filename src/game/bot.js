@@ -7,8 +7,8 @@ import { bestSwapOption } from './swap.js'
 // perfectly predictable.
 const EXPLORATION_RATE = 0.15
 
-export function chooseBotPlacement(board, card, random = Math.random) {
-  const ranked = scorePlacementOptions(board, card)
+export function chooseBotPlacement(board, card, opponentBoard, random = Math.random) {
+  const ranked = scorePlacementOptions(board, card, opponentBoard)
   if (ranked.length > 1 && random() < EXPLORATION_RATE) {
     return ranked[1].col
   }

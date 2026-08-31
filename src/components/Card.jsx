@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { SUIT_SYMBOL, SUIT_COLOR } from './suitDisplay.js'
+import { SUIT_SYMBOL, SUIT_COLOR, rankDisplay } from './suitDisplay.js'
 
 const SIZE = {
   sm: 'w-8 h-11 text-[10px] rounded-md',
@@ -61,12 +61,12 @@ export default function Card({ card, size = 'md', empty = false, highlight = fal
           hidden under the next card — pairing them here is what makes a
           stacked card's suit/color readable without fanning it out. */}
       <span className="flex items-center gap-0.5 leading-none">
-        <span>{card.rank}</span>
+        <span>{rankDisplay(card.rank)}</span>
         <span>{SUIT_SYMBOL[card.suit]}</span>
       </span>
       <span className="self-center text-base leading-none sm:text-xl">{SUIT_SYMBOL[card.suit]}</span>
       <span className="flex rotate-180 items-center gap-0.5 self-end leading-none">
-        <span>{card.rank}</span>
+        <span>{rankDisplay(card.rank)}</span>
         <span>{SUIT_SYMBOL[card.suit]}</span>
       </span>
     </div>

@@ -3,8 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/chinese-poker/favicon.svg" />
+    <link rel="apple-touch-icon" href="/chinese-poker/icon-192.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#052013" />
+    <!-- iOS ignores the web manifest's display:standalone; these are what
+         actually make "Add to Home Screen" open without Safari's chrome,
+         which matters here since testing so far has largely been on
+         iPhone Safari (see the app's own screenshots in review). -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="5-Col Poker" />
     <meta name="description" content="5-Column Poker — a custom head-to-head card game. Play online or vs. computer." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

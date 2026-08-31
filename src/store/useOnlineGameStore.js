@@ -21,6 +21,8 @@ import {
 import { shortId, describeRole } from '../firebase/errors.js'
 import {
   decideRoomEntry,
+  sanitizeRoomCode,
+  ROOM_CODE_LENGTH,
   RESUME_HOST,
   RESUME_GUEST,
   TAKE_SEAT,
@@ -118,7 +120,7 @@ export const useOnlineGameStore = create((set, get) => ({
   ...initialState,
 
   async hostGame({ uid, name, cashGame }) {
-    const roomId = newRoomId()
+    const roomId = await newRoomId()
     await createRoom({ roomId, hostUid: uid, hostName: name, cashGame })
     get()._attach({ roomId, uid, name, isHost: true })
     return roomId
@@ -155,8 +157,11 @@ export const useOnlineGameStore = create((set, get) => ({
   },
 
   async _enterRoom({ roomId, uid, name, allowNewSeat }) {
-    const code = String(roomId ?? '').trim()
-    if (!code) throw new Error('Enter the room code your opponent shared with you.')
+    const code = sanitizeRoomCode(roomId)
+    if (!code) throw new Error('Enter the 4-digit room code your opponent shared with you.')
+    if (code.length !== ROOM_CODE_LENGTH) {
+      throw new Error(`Room codes are exactly ${ROOM_CODE_LENGTH} digits — "${code}" is ${code.length}.`)
+    }
 
     const meta = uid ? await fetchMetaOnce(code, uid) : null
     const { action, isHost } = decideRoomEntry({ meta, myUid: uid, allowNewSeat })
@@ -189,7 +194,7 @@ export const useOnlineGameStore = create((set, get) => ({
           [
             `No room with the code "${code}" exists.`,
             '',
-            'Room codes are case-sensitive and usually start with "-". Check for a missing character or a stray space, and make sure the host still has the room open.',
+            'Double-check the 4 digits with whoever is hosting — codes are short on purpose, so a typo is the most likely cause.',
           ].join('\n'),
         )
 
@@ -346,7 +351,7 @@ export const useOnlineGameStore = create((set, get) => ({
   },
 
   async place(col) {
-    const { room, roomId, myUid, opponentUid, myBoard } = get()
+    const { room, roomId, myUid, opponentUid, myBoard, opponentBoard } = get()
     if (!room || room.meta.status !== 'placing' || room.meta.turnUid !== myUid) return
     if (!openColumnsForPlacement(myBoard).includes(col)) return
     const card = get().nextCardToPlace()
@@ -355,7 +360,12 @@ export const useOnlineGameStore = create((set, get) => ({
     const nextIndex = myBoard[col].length
     if (nextIndex >= 5) return
 
-    const coachTip = coachTipForPlacement(myBoard, card, col)
+    // opponentBoard is already scoped to what this player can legitimately
+    // see (its hidden row only fills in from real data once showdown
+    // opens that read — see _onOpponentPrivate above), so it can be
+    // passed straight through with no extra masking, unlike the local
+    // engine's always-true internal board.
+    const coachTip = coachTipForPlacement(myBoard, card, col, opponentBoard)
     set({ lastCoachTip: { uid: myUid, ...coachTip } })
 
     const willBeMyTotal = totalPlaced(myBoard) + 1

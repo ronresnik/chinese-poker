@@ -259,12 +259,23 @@ earlier version restricted it to members only, which broke joining outright
 (a prospective joiner isn't a member *yet*, and has to be able to check
 "does this room exist, is it full?" before they can become one). This
 doesn't leak anything sensitive — `meta` never holds card data, only
-status/turn/cash-game info — and a room ID is itself an unguessable,
-out-of-band-shared token (the whole point of "share this code with your
-opponent"), so being able to read a room's meta without already being a
-member is no more exposed than the room code itself already is. Card data
-(`private/{uid}`) keeps its strict membership-plus-showdown-gated read rule
-unchanged.
+status/turn/cash-game info. Card data (`private/{uid}`) keeps its strict
+membership-plus-showdown-gated read rule unchanged, regardless of any of
+the below.
+
+**This section originally justified the above by calling a room ID "an
+unguessable, out-of-band-shared token" — that stopped being true once
+room codes shrank to 4 digits** (`firebase/rooms.js`'s `newRoomId`, added
+for usability: a person can actually read a 4-digit code aloud or type it
+on a phone keyboard, unlike a 20-character Firebase push key). A 4-digit
+code has only 10,000 possible values, all of them brute-forceable — a
+scanner could enumerate every code and read the `meta` of every open
+room, and in principle race a real second player to an open seat in one
+it finds still `"waiting"`. `meta` still never carries card data, so this
+doesn't expose hands or outcomes — but it's a real narrowing of the
+privacy assumption this section used to lean on, taken on deliberately in
+exchange for a code a person can actually use, not an oversight. See the
+comment on `newRoomId` for the full writeup.
 
 Two things are **explicitly not guaranteed**, because they'd require a
 trusted server (a paid Cloud Functions plan) to referee:

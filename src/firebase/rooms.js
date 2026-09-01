@@ -1,4 +1,4 @@
-import { ref, get, update, onValue, push, onDisconnect, serverTimestamp } from 'firebase/database'
+import { ref, get, update, onValue, onDisconnect, serverTimestamp } from 'firebase/database'
 import { rtdb, auth } from './config.js'
 import { buildRoomErrorReport } from './errors.js'
 import { buildDealPlan } from '../game/dealPlan.js'
@@ -6,8 +6,47 @@ import { evaluateHand } from '../game/handEvaluator.js'
 import { COLUMNS, HIDDEN_ROW_INDEX } from '../game/board.js'
 import { cardCode } from '../game/deck.js'
 
-export function newRoomId() {
-  return push(ref(rtdb, 'rooms')).key
+const ROOM_CODE_DIGITS = 4
+const ROOM_CODE_MAX_ATTEMPTS = 25
+
+/**
+ * A 4-digit numeric code (e.g. "0427") rather than a Firebase push key
+ * (e.g. "-P-wGAzkBsMBQ9ZPONcu") — short enough to read aloud or type on a
+ * phone keyboard, which a 20-character opaque string never was.
+ *
+ * This is a real trade-off, not a free win, and worth being explicit
+ * about: docs/firebase-schema.md's trust model leans on the room id being
+ * "an unguessable, out-of-band-shared token" to justify `meta` being
+ * readable by any signed-in user. A 4-digit code has only 10,000 possible
+ * values, all of them guessable by brute-force enumeration — someone
+ * could scan every code and read the `meta` (status/turn/cash-game info,
+ * never card data) of every open room, and in principle race a real
+ * second player to an open seat. `meta` still never carries card data
+ * (that stays behind the private/{uid} read rule regardless), so this
+ * doesn't expose hands or outcomes — but it's a real narrowing of the
+ * "share this code with your opponent" privacy assumption, made in
+ * exchange for a code a person can actually use. See
+ * docs/firebase-schema.md for the full writeup.
+ *
+ * Retries on collision (checked via a real existence read, not just left
+ * to the create-room write to fail) since the keyspace is small enough
+ * that a collision is a real possibility, not a hypothetical.
+ */
+export async function newRoomId() {
+  for (let attempt = 0; attempt < ROOM_CODE_MAX_ATTEMPTS; attempt++) {
+    const code = randomRoomCode()
+    const snap = await get(ref(rtdb, `rooms/${code}/meta/hostUid`))
+    if (!snap.exists()) return code
+  }
+  throw new Error('Could not find a free room code — please try hosting again.')
+}
+
+function randomRoomCode() {
+  const max = 10 ** ROOM_CODE_DIGITS
+  const buf = new Uint32Array(1)
+  crypto.getRandomValues(buf)
+  const n = buf[0] % max
+  return String(n).padStart(ROOM_CODE_DIGITS, '0')
 }
 
 /**

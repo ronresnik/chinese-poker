@@ -1,15 +1,30 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useLocalGameStore, HUMAN_UID, BOT_UID } from '../store/useLocalGameStore.js'
+import { useAuthStore } from '../store/useAuthStore.js'
 import { getCurrentTurnUid, getNextCard, PHASE } from '../game/engine.js'
 import { maskHiddenRow } from '../game/board.js'
+import { recordGameResult, newLocalGameId } from '../store/useLeaderboardStore.js'
 import GameScreen from '../components/GameScreen.jsx'
 
 export default function LocalGame() {
   const navigate = useNavigate()
   const location = useLocation()
   const { state, startGame, place, swap, reset } = useLocalGameStore()
+  const { user } = useAuthStore()
   const [displayedTip, setDisplayedTip] = useState(null)
+  const [statsNote, setStatsNote] = useState(null)
+
+  // A fresh id per game, not per component mount — regenerated in
+  // onPlayAgain below alongside reset()+startGame(), since that replays a
+  // whole new game inside the same mounted component rather than
+  // navigating away and back.
+  const [gameId, setGameId] = useState(newLocalGameId)
+  // Guards against writing the same finished game twice — e.g. if this
+  // effect were to re-run for any reason while `status` is still
+  // COMPLETE, which a bare "have I recorded yet" boolean wouldn't survive
+  // across the id changing on a "Play Again".
+  const recordedGameIdRef = useRef(null)
 
   useEffect(() => {
     if (!state) {
@@ -20,6 +35,39 @@ export default function LocalGame() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Vs-computer games never touched Firestore at all until now, which is
+  // the main reason the leaderboard looked broken/permanently empty: this
+  // is the mode actually played in this sandbox, and the leaderboard only
+  // ever recorded 2-real-player online matches. The write is otherwise
+  // identical to the online path (see useLeaderboardStore.js's
+  // recordGameResult) — the bot's constant uid just takes the place of a
+  // second real player, which the Firestore rules don't need to
+  // distinguish. Best-effort and non-blocking: recording failure (or no
+  // signed-in user at all, e.g. a fully offline device) must never affect
+  // the result already on screen, only add a footnote to it.
+  useEffect(() => {
+    if (state?.status !== PHASE.COMPLETE || !state.result) return
+    if (!user?.uid || !gameId) return
+    if (recordedGameIdRef.current === gameId) return
+    recordedGameIdRef.current = gameId
+
+    recordGameResult({
+      gameId,
+      isHost: true,
+      myUid: user.uid,
+      myName: state.players[HUMAN_UID].name,
+      opponentUid: BOT_UID,
+      opponentName: state.players[BOT_UID].name,
+      cashGame: state.cashGame,
+      result: state.result,
+    })
+      .then((outcome) => {
+        if (outcome && outcome.recorded === false) setStatsNote(outcome.reason)
+      })
+      .catch((err) => setStatsNote(err.message))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state?.status, gameId])
 
   // engine.js's lastCoachTip is a single shared field the bot's own moves
   // also write to — capture only the human's tips here so a bot move
@@ -62,8 +110,11 @@ export default function LocalGame() {
       onSwapCard={swap}
       coachTip={displayedTip}
       result={state.result}
+      statsNote={statsNote}
       onPlayAgain={() => {
         reset()
+        setStatsNote(null)
+        setGameId(newLocalGameId())
         startGame({ humanName: state.players[HUMAN_UID].name, cashGame: state.cashGame })
       }}
       onExit={() => {

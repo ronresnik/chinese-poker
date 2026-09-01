@@ -93,6 +93,31 @@ instead of the Actions workflow, set **Settings -> Pages -> Source** to
 Actions". Don't mix both methods on the same repo at once — pick one
 Pages source.
 
+## Offline support
+
+The build includes a service worker (`vite-plugin-pwa`, configured in
+`vite.config.js`) that precaches the entire built app shell — every JS/CSS
+bundle, `index.html`, and the icons — the first time a player loads the
+site with a connection. After that, the app itself (including
+vs.-computer play, which never needed a connection to begin with) keeps
+working with no network at all; reloading offline serves the precached
+build straight from the service worker rather than failing.
+
+Firebase reads/writes are deliberately **excluded** from that cache
+(`navigateFallbackDenylist` / the `NetworkOnly` runtime-caching rule for
+`*.firebaseio.com` / `*.googleapis.com` in `vite.config.js`) — online
+multiplayer and the leaderboard still require a real connection, and
+always will; the alternative (serving a stale room snapshot, or silently
+"succeeding" a write that never left the device) would be worse than a
+clear failure. `registerType: 'autoUpdate'` means a new deploy's service
+worker installs and takes over in the background on the next load,
+without anyone needing to see or dismiss an "update available" prompt.
+
+The manifest icons are pre-rendered PNGs in `public/` (`icon-192.png`,
+`icon-512.png`, `icon-512-maskable.png`), generated from `favicon.svg` —
+run `node scripts/gen-icons.mjs` to regenerate them if the source SVG
+ever changes (see that file for the one-off setup it needs).
+
 ## Troubleshooting
 
 - **Blank page / assets 404 after deploy** — almost always a `base`
@@ -106,3 +131,7 @@ Pages source.
   only ever needs to serve the single `index.html` at the root, regardless
   of what follows the `#`. If you see 404s on a route, check that a
   `BrowserRouter` didn't get swapped in by mistake (see `src/main.jsx`).
+- **Changes not showing up after a redeploy** — the service worker (see
+  "Offline support" above) may still be serving the previous precached
+  build from one tab that's stayed open across the deploy; a full reload
+  of that tab (not just navigating within the app) picks up the update.

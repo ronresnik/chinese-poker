@@ -12,3 +12,15 @@ export const SUIT_COLOR = { s: 'text-ink', h: 'text-red-600', c: 'text-ink', d: 
 // (CardCounter's tally, not a card face) — text-ink here would be a
 // near-black glyph on a near-black background, effectively invisible.
 export const SUIT_COLOR_ON_DARK = { s: 'text-white/80', h: 'text-red-400', c: 'text-white/80', d: 'text-red-400' }
+
+// The engine/deck represent ten as the single character 'T' (see
+// game/deck.js's RANKS) so every hand stays a fixed-width single
+// character internally — but shown to a player as a bare "T" it reads as
+// an abbreviation no other rank has (2-9 already show as themselves, J/Q/K/A
+// are the one-letter forms everyone already knows). Anywhere a rank is
+// displayed as text, run it through this first; nothing that treats rank
+// as data (sorting, equality, the 'T' card code used as a lookup key)
+// should ever call it.
+export function rankDisplay(rank) {
+  return rank === 'T' ? '10' : rank
+}

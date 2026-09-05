@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useOnlineGameStore } from '../store/useOnlineGameStore.js'
 import { useAuthStore } from '../store/useAuthStore.js'
+import { closeLobbyEntry } from '../firebase/rooms.js'
 import GameScreen from '../components/GameScreen.jsx'
 import ErrorReport from '../components/ErrorReport.jsx'
 
@@ -128,7 +129,22 @@ export default function OnlineGame() {
             )}
           </>
         )}
-        <button type="button" className="btn-ghost" onClick={() => navigate('/')}>
+        <button
+          type="button"
+          className="btn-ghost"
+          onClick={() => {
+            // The host leaving a still-open room used to just navigate
+            // away with no cleanup at all — the room stayed listed in
+            // the open-rooms lobby (see Home.jsx) as tappable, joinable,
+            // and permanently stuck at "waiting" for a host who'd already
+            // left. Only the host can close it (see closeLobbyEntry's own
+            // rule-backed permission check); a guest leaving has nothing
+            // of their own to clean up here.
+            if (store.isHost) closeLobbyEntry(roomId).catch(() => {})
+            store.leave()
+            navigate('/')
+          }}
+        >
           Leave
         </button>
       </div>

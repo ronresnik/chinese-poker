@@ -1,11 +1,21 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/useAuthStore.js'
 import { useOnlineGameStore } from '../store/useOnlineGameStore.js'
 import { sanitizeRoomCode, ROOM_CODE_LENGTH } from '../firebase/roomEntry.js'
+import { subscribeOpenRooms } from '../firebase/rooms.js'
+import { formatCurrency } from '../utils/format.js'
 import ErrorReport from '../components/ErrorReport.jsx'
 
 const CURRENCIES = ['USD', 'NIS', 'EUR', 'GBP']
+
+// A host who closes their tab without hitting "Leave" (see
+// OnlineGame.jsx) leaves their lobby entry behind indefinitely — there's
+// no server-side cleanup on this free-tier stack (see
+// docs/firebase-schema.md). Hiding anything older than this is a cheap
+// client-side mitigation, not a real fix: a stale entry still exists in
+// the database, it just stops being *offered* to browse.
+const STALE_ROOM_MS = 2 * 60 * 60 * 1000
 
 export default function Home() {
   const navigate = useNavigate()
@@ -54,17 +64,18 @@ export default function Home() {
     }
   }
 
-  async function handleJoin(e) {
-    e.preventDefault()
+  // Shared by the manual code form below AND tapping an entry in the open
+  // rooms list — same call, same sanitization, same navigation target.
+  // Sanitizing once, here, and using the result for BOTH the join call
+  // and the URL matters even for a list tap (where the code is already
+  // clean): using the raw input for one and the sanitized code for the
+  // other would make OnlineGame.jsx's `store.roomId !== roomId` check
+  // fail even for a join that actually succeeded.
+  async function joinRoomByCode(rawCode) {
     if (!requireName()) return
     setBusy(true)
     setError(null)
-    // Sanitized once, here, and used for BOTH the join call and the
-    // navigation target — using the raw typed input for the URL while
-    // the store attaches under the sanitized code would make
-    // OnlineGame.jsx's `store.roomId !== roomId` check fail even for a
-    // join that actually succeeded.
-    const code = sanitizeRoomCode(joinCode)
+    const code = sanitizeRoomCode(rawCode)
     try {
       await joinGame({ roomId: code, uid: user.uid, name: playerName })
       navigate(`/online/${code}`, { state: { name: playerName } })
@@ -74,7 +85,31 @@ export default function Home() {
     }
   }
 
+  function handleJoinForm(e) {
+    e.preventDefault()
+    joinRoomByCode(joinCode)
+  }
+
   const onlineReady = authStatus === 'ready' && !!user
+
+  // Open rooms: see firebase/rooms.js's subscribeOpenRooms/publishToLobby
+  // for why this can list rooms at all (a separate `lobby` index, since
+  // nothing grants a broad read over `rooms` itself). Only subscribed
+  // once signed in — `lobby`'s RTDB rule requires auth, so attaching any
+  // earlier would just be a listener sitting on a permission error.
+  const [openRooms, setOpenRooms] = useState([])
+  useEffect(() => {
+    if (!onlineReady) return undefined
+    const unsub = subscribeOpenRooms((raw) => {
+      const now = Date.now()
+      const rooms = Object.entries(raw ?? {})
+        .map(([id, entry]) => ({ id, ...entry }))
+        .filter((r) => r.status === 'waiting' && r.hostUid !== user.uid && now - (r.createdAt ?? 0) < STALE_ROOM_MS)
+        .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+      setOpenRooms(rooms)
+    })
+    return unsub
+  }, [onlineReady, user?.uid])
 
   return (
     <div className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center gap-6 px-5 py-8">
@@ -175,12 +210,53 @@ export default function Home() {
           {authStatus === 'error' ? 'Online unavailable — offline?' : onlineReady ? 'Host Online Game' : 'Connecting…'}
         </button>
 
+        {/* Browsable rooms, not just a code field: tapping one joins with
+            no typing at all. See firebase/rooms.js's subscribeOpenRooms
+            for what makes a room "open" here, and the trust-model note in
+            docs/firebase-schema.md for what listing rooms publicly like
+            this trades away versus only being joinable by a shared code. */}
+        {onlineReady && (
+          <div className="panel flex flex-col gap-2 p-3">
+            <div className="flex items-center justify-between px-1">
+              <span className="text-xs font-semibold uppercase tracking-wide text-white/40">Open Rooms</span>
+              {openRooms.length > 0 && <span className="text-xs text-white/30">{openRooms.length} waiting</span>}
+            </div>
+
+            {openRooms.length === 0 ? (
+              <p className="px-1 text-xs text-white/40">No open rooms right now — host one, or join with a code below.</p>
+            ) : (
+              <ul className="flex flex-col gap-1.5">
+                {openRooms.map((room) => (
+                  <li key={room.id}>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => joinRoomByCode(room.id)}
+                      className="flex w-full items-center justify-between gap-2 rounded-lg bg-white/5 px-3 py-2 text-left transition-colors hover:bg-white/10 disabled:opacity-50"
+                    >
+                      <span className="truncate text-sm text-white/90">{room.hostName || 'Player'}&rsquo;s room</span>
+                      <span className="flex shrink-0 items-center gap-2">
+                        {room.cashGame?.enabled && (
+                          <span className="rounded-full bg-gold/15 px-2 py-0.5 text-[11px] font-semibold text-gold-light">
+                            {formatCurrency(room.cashGame.valuePerColumn, room.cashGame.currency)}/col
+                          </span>
+                        )}
+                        <span className="font-mono text-xs text-white/40">{room.id}</span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
         {!showJoin ? (
           <button type="button" className="btn-ghost" disabled={!onlineReady} onClick={() => setShowJoin(true)}>
-            {authStatus === 'error' ? 'Online unavailable — offline?' : 'Join Online Game'}
+            {authStatus === 'error' ? 'Online unavailable — offline?' : 'Join by Code'}
           </button>
         ) : (
-          <form onSubmit={handleJoin} className="flex gap-2">
+          <form onSubmit={handleJoinForm} className="flex gap-2">
             <input
               value={joinCode}
               onChange={(e) => setJoinCode(sanitizeRoomCode(e.target.value).slice(0, ROOM_CODE_LENGTH))}

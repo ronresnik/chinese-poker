@@ -18,6 +18,9 @@ export const useLeaderboardStore = create((set) => ({
   status: 'idle', // 'idle' | 'loading' | 'ready' | 'error'
   error: null,
 
+  headToHead: [],
+  headToHeadStatus: 'idle', // 'idle' | 'loading' | 'ready' | 'error'
+
   async fetchTop(count = 50) {
     set({ status: 'loading', error: null })
     try {
@@ -27,6 +30,25 @@ export const useLeaderboardStore = create((set) => ({
       set({ entries, status: 'ready' })
     } catch (err) {
       set({ status: 'error', error: err.message })
+    }
+  },
+
+  // The signed-in viewer's own record against every opponent they've
+  // played — the users/{uid} doc itself only carries totals, not who
+  // they were against, so this reads the sibling headToHead subcollection
+  // (see firestore.rules and recordGameResult below) instead.
+  async fetchHeadToHead(uid) {
+    if (!uid) {
+      set({ headToHead: [], headToHeadStatus: 'idle' })
+      return
+    }
+    set({ headToHeadStatus: 'loading' })
+    try {
+      const snap = await getDocs(collection(db, 'users', uid, 'headToHead'))
+      const records = snap.docs.map((d) => d.data()).sort((a, b) => b.gamesPlayed - a.gamesPlayed)
+      set({ headToHead: records, headToHeadStatus: 'ready' })
+    } catch {
+      set({ headToHeadStatus: 'error' })
     }
   },
 }))
@@ -54,7 +76,20 @@ export async function ensureUserProfile(uid, displayName) {
     uid,
     displayName: displayName ?? 'Player',
     createdAt: serverTimestamp(),
-    stats: { gamesPlayed: 0, gamesWon: 0, gamesLost: 0 },
+    stats: {
+      gamesPlayed: 0,
+      gamesWon: 0,
+      gamesLost: 0,
+      // columnsWon/sweeps/currentWinStreak/bestWinStreak: see
+      // recordGameResult and firestore.rules' users/{uid} update rule,
+      // which reads each with a `.get(field, 0)` fallback specifically so
+      // a profile created before these existed doesn't get permanently
+      // locked out of ever updating again.
+      columnsWon: 0,
+      sweeps: 0,
+      currentWinStreak: 0,
+      bestWinStreak: 0,
+    },
   }
   await setDoc(ref, profile)
   return profile
@@ -133,19 +168,58 @@ export async function recordGameResult({
 
   await ensureUserProfile(myUid, myName)
   const userRef = doc(db, 'users', myUid)
+  const h2hRef = doc(db, 'users', myUid, 'headToHead', opponentUid)
   const won = result.winnerUid === myUid
   const lost = result.winnerUid === opponentUid
+  const columnsWonThisGame = result.columnsWon?.[myUid] ?? 0
+  // A sweep only counts toward *this* player's sweep tally when they're
+  // the one who swept — result.sweep alone doesn't say which side did,
+  // just that the match was 5-0 either way.
+  const isSweep = won && !!result.sweep
 
   await runTransaction(db, async (tx) => {
-    const snap = await tx.get(userRef)
-    const stats = snap.data().stats
+    // Every read in a Firestore transaction must happen before any write
+    // — both docs are read here first, then both written below.
+    const userSnap = await tx.get(userRef)
+    const h2hSnap = await tx.get(h2hRef)
+
+    const stats = userSnap.data().stats
+    // .get-with-fallback equivalent for a profile written before these
+    // fields existed — see ensureUserProfile and firestore.rules' matching
+    // .get(field, 0) on the same fields, which is what actually allows an
+    // update from a legacy document to succeed at all.
+    const columnsWon = stats.columnsWon ?? 0
+    const sweeps = stats.sweeps ?? 0
+    const currentWinStreak = stats.currentWinStreak ?? 0
+    const bestWinStreak = stats.bestWinStreak ?? 0
+
+    const newCurrentWinStreak = won ? currentWinStreak + 1 : 0
+
     tx.update(userRef, {
       lastGameId: gameId,
       stats: {
         gamesPlayed: stats.gamesPlayed + 1,
         gamesWon: stats.gamesWon + (won ? 1 : 0),
         gamesLost: stats.gamesLost + (lost ? 1 : 0),
+        columnsWon: columnsWon + columnsWonThisGame,
+        sweeps: sweeps + (isSweep ? 1 : 0),
+        currentWinStreak: newCurrentWinStreak,
+        bestWinStreak: Math.max(bestWinStreak, newCurrentWinStreak),
       },
+    })
+
+    const h2h = h2hSnap.exists() ? h2hSnap.data() : { wins: 0, losses: 0, gamesPlayed: 0 }
+    // A full overwrite (not tx.update's partial-merge) either way: on a
+    // brand-new opponent this doc doesn't exist yet, so update() would
+    // fail outright, and firestore.rules' create/update split expects the
+    // complete shape in both cases anyway.
+    tx.set(h2hRef, {
+      opponentUid,
+      opponentName,
+      wins: h2h.wins + (won ? 1 : 0),
+      losses: h2h.losses + (lost ? 1 : 0),
+      gamesPlayed: h2h.gamesPlayed + 1,
+      lastGameId: gameId,
     })
   })
 

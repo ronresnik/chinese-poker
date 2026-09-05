@@ -14,12 +14,30 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
+    // The one game record a stats write is allowed to cite as proof — see
+    // every use below. get() results are cached per unique path within a
+    // single rule evaluation, so citing the same gameId from both the
+    // top-level stats check and the headToHead check further down costs
+    // one read, not two.
+    function gameDoc(gameId) {
+      return get(/databases/$(database)/documents/games/$(gameId)).data;
+    }
+
     // Public player profile + aggregate stats. Readable by anyone — needed
     // for the leaderboard and for showing opponent names in a room.
     // Writable only by the owner, and only in ways that can't be used to
     // fabricate a win: stats may only move forward by at most one game per
     // write, and any gamesWon increment must cite a real, matching `games`
     // record (see the games collection below).
+    //
+    // stats.get('field', 0) rather than stats.field throughout the update
+    // rule: columnsWon/sweeps/currentWinStreak/bestWinStreak were added
+    // after gamesPlayed/gamesWon/gamesLost, so any profile written before
+    // this change is missing them entirely. Reading a genuinely-missing
+    // map key as a bare field (not through .get with a default) evaluates
+    // to null, and null arithmetic here would reject every future update
+    // from that profile — permanently locking a real, previously-legitimate
+    // player out of ever recording another game.
     match /users/{uid} {
       allow read: if true;
 
@@ -27,7 +45,11 @@ service cloud.firestore {
         && request.resource.data.uid == uid
         && request.resource.data.stats.gamesPlayed == 0
         && request.resource.data.stats.gamesWon == 0
-        && request.resource.data.stats.gamesLost == 0;
+        && request.resource.data.stats.gamesLost == 0
+        && request.resource.data.stats.columnsWon == 0
+        && request.resource.data.stats.sweeps == 0
+        && request.resource.data.stats.currentWinStreak == 0
+        && request.resource.data.stats.bestWinStreak == 0;
 
       allow update: if isOwner(uid)
         && request.resource.data.uid == resource.data.uid
@@ -42,12 +64,91 @@ service cloud.firestore {
           request.resource.data.stats.gamesWon == resource.data.stats.gamesWon
           || (
             request.resource.data.lastGameId is string
-            && get(/databases/$(database)/documents/games/$(request.resource.data.lastGameId)).data.winnerUid == uid
-            && uid in get(/databases/$(database)/documents/games/$(request.resource.data.lastGameId)).data.players
+            && gameDoc(request.resource.data.lastGameId).winnerUid == uid
+            && uid in gameDoc(request.resource.data.lastGameId).players
           )
+        )
+        // A column tally can only move by the 0-5 one game can actually add.
+        && request.resource.data.stats.columnsWon >= resource.data.stats.get('columnsWon', 0)
+        && request.resource.data.stats.columnsWon <= resource.data.stats.get('columnsWon', 0) + 5
+        // A sweep (5-0) win is a single event per game.
+        && request.resource.data.stats.sweeps >= resource.data.stats.get('sweeps', 0)
+        && request.resource.data.stats.sweeps <= resource.data.stats.get('sweeps', 0) + 1
+        // A win streak either resets to 0 (a loss, or just not extended)
+        // or extends by exactly 1 — and only by citing the same real win
+        // that gamesWon above already required, so a client can't grow
+        // its own streak without an actual win backing each step.
+        && (
+          request.resource.data.stats.currentWinStreak == 0
+          || (
+            request.resource.data.stats.currentWinStreak == resource.data.stats.get('currentWinStreak', 0) + 1
+            && request.resource.data.lastGameId is string
+            && gameDoc(request.resource.data.lastGameId).winnerUid == uid
+          )
+        )
+        // The best streak is exactly the higher of what it already was
+        // and the streak this same write just set — never anything else,
+        // so it can't be inflated independently of a real streak.
+        && request.resource.data.stats.bestWinStreak == (
+          request.resource.data.stats.currentWinStreak > resource.data.stats.get('bestWinStreak', 0)
+            ? request.resource.data.stats.currentWinStreak
+            : resource.data.stats.get('bestWinStreak', 0)
         );
 
       allow delete: if false;
+
+      // One player's running record against one specific opponent (uid
+      // included: the bot's constant uid works the same as a real
+      // player's — "your record vs the Computer" is exactly this
+      // subcollection with opponentUid == 'bot'). A separate document per
+      // opponent rather than a nested map field on the parent doc: a map
+      // update's rule would have to diff "did only this one key change,
+      // and only in a valid way" across an arbitrarily-keyed structure,
+      // which is a lot more rule surface to get subtly wrong with no
+      // emulator to check it against (see docs/firebase-schema.md and
+      // this file's header) than one more collection with the same
+      // shape of rule the parent doc already has above.
+      match /headToHead/{opponentUid} {
+        allow read: if true;
+
+        allow create: if isOwner(uid)
+          && request.resource.data.opponentUid == opponentUid
+          && request.resource.data.opponentName is string
+          && request.resource.data.gamesPlayed == 1
+          && request.resource.data.lastGameId is string
+          && uid in gameDoc(request.resource.data.lastGameId).players
+          && opponentUid in gameDoc(request.resource.data.lastGameId).players
+          && (
+            (
+              request.resource.data.wins == 1 && request.resource.data.losses == 0
+              && gameDoc(request.resource.data.lastGameId).winnerUid == uid
+            ) || (
+              request.resource.data.losses == 1 && request.resource.data.wins == 0
+              && gameDoc(request.resource.data.lastGameId).winnerUid == opponentUid
+            )
+          );
+
+        allow update: if isOwner(uid)
+          && request.resource.data.opponentUid == resource.data.opponentUid
+          && request.resource.data.opponentName is string
+          && request.resource.data.gamesPlayed == resource.data.gamesPlayed + 1
+          && request.resource.data.lastGameId is string
+          && uid in gameDoc(request.resource.data.lastGameId).players
+          && opponentUid in gameDoc(request.resource.data.lastGameId).players
+          && (
+            (
+              request.resource.data.wins == resource.data.wins + 1
+              && request.resource.data.losses == resource.data.losses
+              && gameDoc(request.resource.data.lastGameId).winnerUid == uid
+            ) || (
+              request.resource.data.losses == resource.data.losses + 1
+              && request.resource.data.wins == resource.data.wins
+              && gameDoc(request.resource.data.lastGameId).winnerUid == opponentUid
+            )
+          );
+
+        allow delete: if false;
+      }
     }
 
     // Immutable, append-only match history — the audit trail behind

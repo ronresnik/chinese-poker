@@ -219,15 +219,15 @@ most-likely-first per operation, and the whole block is copyable.
 ```
 users/{uid}
   uid, displayName, createdAt
-  stats/
+  stats/                                  -- ONLINE games only, see below
     gamesPlayed, gamesWon, gamesLost     number, monotonically non-decreasing
     columnsWon                           number — cumulative columns won across all games
-    sweeps                               number — 5-0 wins only (not sweeps suffered)
+    wins5_0, wins4_1, wins3_2            number — online wins by exact column margin
     currentWinStreak                     number — resets to 0 on any loss
     bestWinStreak                        number — the high-water mark of currentWinStreak
   lastGameId                              string — audit pointer, see rules
 
-  headToHead/{opponentUid}                -- one doc per opponent ever played
+  headToHead/{opponentUid}                -- one doc per opponent ever played, ONLINE OR BOT
     opponentUid, opponentName
     wins, losses, gamesPlayed             this player's record against that one opponent
     lastGameId                            string — audit pointer, see rules
@@ -254,10 +254,23 @@ bot's constant uid (`BOT_UID` in useLocalGameStore.js) works as an
 `opponentUid` here exactly like a real player's would — "your record vs.
 the Computer" is just this subcollection with `opponentUid == 'bot'`.
 
-Every one of these new stats fields is validated the same way the
-original three were: `columnsWon`/`sweeps` are bounded to the 0-5 (or
-0-1) a single game can actually add; `currentWinStreak` may only reset to
-0 or extend by exactly 1, and extending requires citing the same real win
+**`stats` is online-only.** A vs-computer game never writes to
+`users/{uid}.stats` at all — see `recordGameResult`'s `isOnline` param in
+useLeaderboardStore.js. Only the `headToHead` entry for `opponentUid ==
+'bot'` is updated, exactly like it would be for any other opponent. This
+is deliberate: `stats` backs the ranked leaderboard, and without this
+split a solo player could inflate their rank by farming wins against the
+bot with nobody else involved. "How many the computer has won vs. how
+many you've won" is shown from that same headToHead entry, not from
+`stats`.
+
+Every one of these stats fields is validated the same way the original
+three were: `columnsWon` is bounded to the 0-5 a single game can actually
+add; `wins5_0`/`wins4_1`/`wins3_2` may each move by at most 1 per write,
+and only the one matching the actual column split of the cited game (see
+firestore.rules' `myColumnsWon`) — not just "any win", the specific
+5-0/4-1/3-2 this one was; `currentWinStreak` may only reset to 0 or
+extend by exactly 1, and extending requires citing the same real win
 `gamesWon` already requires; `bestWinStreak` must equal the higher of its
 old value and the streak this same write just set, never anything else.
 See firestore.rules' `users/{uid}` `allow update` for the exact

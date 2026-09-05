@@ -23,21 +23,39 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/games/$(gameId)).data;
     }
 
-    // Public player profile + aggregate stats. Readable by anyone — needed
-    // for the leaderboard and for showing opponent names in a room.
-    // Writable only by the owner, and only in ways that can't be used to
-    // fabricate a win: stats may only move forward by at most one game per
-    // write, and any gamesWon increment must cite a real, matching `games`
-    // record (see the games collection below).
+    // The winning margin (5, 4, or 3 — see game/README.md's "no column is
+    // ever drawn" proof, which is what makes exactly one of these three
+    // values the only possibilities) only means anything for the player
+    // who actually won; callers below only ever read this once they've
+    // already confirmed winnerUid == uid.
+    function myColumnsWon(gameId, uid) {
+      return gameDoc(gameId).result.columnsWon[uid];
+    }
+
+    // Public player profile + aggregate stats — ONLINE games only. A
+    // vs-computer game never touches this doc at all (see
+    // useLeaderboardStore.js's recordGameResult and
+    // docs/firebase-schema.md): the leaderboard ranks real head-to-head
+    // play, and a solo player farming wins against the bot must not be
+    // able to inflate it. "Your record vs. the Computer" instead lives
+    // entirely in the headToHead subcollection below, same as it does for
+    // any other opponent — see its own rule block for how that's kept
+    // separate from a real win. Readable by anyone — needed for the
+    // leaderboard and for showing opponent names in a room. Writable only
+    // by the owner, and only in ways that can't be used to fabricate a
+    // win: stats may only move forward by at most one game per write, and
+    // any gamesWon increment must cite a real, matching `games` record
+    // (see the games collection below).
     //
     // stats.get('field', 0) rather than stats.field throughout the update
-    // rule: columnsWon/sweeps/currentWinStreak/bestWinStreak were added
-    // after gamesPlayed/gamesWon/gamesLost, so any profile written before
-    // this change is missing them entirely. Reading a genuinely-missing
-    // map key as a bare field (not through .get with a default) evaluates
-    // to null, and null arithmetic here would reject every future update
-    // from that profile — permanently locking a real, previously-legitimate
-    // player out of ever recording another game.
+    // rule: columnsWon/wins5_0/wins4_1/wins3_2/currentWinStreak/
+    // bestWinStreak were added after gamesPlayed/gamesWon/gamesLost, so
+    // any profile written before this change is missing them entirely.
+    // Reading a genuinely-missing map key as a bare field (not through
+    // .get with a default) evaluates to null, and null arithmetic here
+    // would reject every future update from that profile — permanently
+    // locking a real, previously-legitimate player out of ever recording
+    // another game.
     match /users/{uid} {
       allow read: if true;
 
@@ -47,7 +65,9 @@ service cloud.firestore {
         && request.resource.data.stats.gamesWon == 0
         && request.resource.data.stats.gamesLost == 0
         && request.resource.data.stats.columnsWon == 0
-        && request.resource.data.stats.sweeps == 0
+        && request.resource.data.stats.wins5_0 == 0
+        && request.resource.data.stats.wins4_1 == 0
+        && request.resource.data.stats.wins3_2 == 0
         && request.resource.data.stats.currentWinStreak == 0
         && request.resource.data.stats.bestWinStreak == 0;
 
@@ -71,9 +91,39 @@ service cloud.firestore {
         // A column tally can only move by the 0-5 one game can actually add.
         && request.resource.data.stats.columnsWon >= resource.data.stats.get('columnsWon', 0)
         && request.resource.data.stats.columnsWon <= resource.data.stats.get('columnsWon', 0) + 5
-        // A sweep (5-0) win is a single event per game.
-        && request.resource.data.stats.sweeps >= resource.data.stats.get('sweeps', 0)
-        && request.resource.data.stats.sweeps <= resource.data.stats.get('sweeps', 0) + 1
+        // Exactly one of the three margin counters may move, by exactly
+        // 1, and only the one matching this game's ACTUAL column split
+        // (see myColumnsWon) — not just any win, the specific 5-0/4-1/3-2
+        // this one was. No win this write means none of the three move.
+        && request.resource.data.stats.wins5_0 >= resource.data.stats.get('wins5_0', 0)
+        && request.resource.data.stats.wins5_0 <= resource.data.stats.get('wins5_0', 0) + 1
+        && request.resource.data.stats.wins4_1 >= resource.data.stats.get('wins4_1', 0)
+        && request.resource.data.stats.wins4_1 <= resource.data.stats.get('wins4_1', 0) + 1
+        && request.resource.data.stats.wins3_2 >= resource.data.stats.get('wins3_2', 0)
+        && request.resource.data.stats.wins3_2 <= resource.data.stats.get('wins3_2', 0) + 1
+        && (
+          (
+            request.resource.data.stats.gamesWon == resource.data.stats.gamesWon
+            && request.resource.data.stats.wins5_0 == resource.data.stats.get('wins5_0', 0)
+            && request.resource.data.stats.wins4_1 == resource.data.stats.get('wins4_1', 0)
+            && request.resource.data.stats.wins3_2 == resource.data.stats.get('wins3_2', 0)
+          ) || (
+            myColumnsWon(request.resource.data.lastGameId, uid) == 5
+            && request.resource.data.stats.wins5_0 == resource.data.stats.get('wins5_0', 0) + 1
+            && request.resource.data.stats.wins4_1 == resource.data.stats.get('wins4_1', 0)
+            && request.resource.data.stats.wins3_2 == resource.data.stats.get('wins3_2', 0)
+          ) || (
+            myColumnsWon(request.resource.data.lastGameId, uid) == 4
+            && request.resource.data.stats.wins4_1 == resource.data.stats.get('wins4_1', 0) + 1
+            && request.resource.data.stats.wins5_0 == resource.data.stats.get('wins5_0', 0)
+            && request.resource.data.stats.wins3_2 == resource.data.stats.get('wins3_2', 0)
+          ) || (
+            myColumnsWon(request.resource.data.lastGameId, uid) == 3
+            && request.resource.data.stats.wins3_2 == resource.data.stats.get('wins3_2', 0) + 1
+            && request.resource.data.stats.wins5_0 == resource.data.stats.get('wins5_0', 0)
+            && request.resource.data.stats.wins4_1 == resource.data.stats.get('wins4_1', 0)
+          )
+        )
         // A win streak either resets to 0 (a loss, or just not extended)
         // or extends by exactly 1 — and only by citing the same real win
         // that gamesWon above already required, so a client can't grow

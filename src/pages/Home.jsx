@@ -172,15 +172,30 @@ export default function Home() {
             type="button"
             onClick={() => setCashEnabled((v) => !v)}
             className={
-              cashEnabled
-                ? 'relative h-6 w-11 rounded-full bg-gold transition-colors'
-                : 'relative h-6 w-11 rounded-full bg-white/15 transition-colors'
+              // shrink-0: a flex row's default flex-shrink:1 could otherwise
+              // squeeze this button narrower than its fixed w-11 whenever the
+              // "Cash game" label needs more room than the row has to spare —
+              // the knob's absolute translate-x-5 is a fixed pixel offset, so
+              // a squeezed track would push it out past the button's own
+              // (now-narrower) right edge instead of sliding inside it.
+              (cashEnabled
+                ? 'relative h-6 w-11 shrink-0 rounded-full bg-gold transition-colors'
+                : 'relative h-6 w-11 shrink-0 rounded-full bg-white/15 transition-colors')
             }
           >
             <span
               className={
-                'absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ' +
-                (cashEnabled ? 'translate-x-5' : 'translate-x-0.5')
+                // left-0.5 is the actual bug fix: with no `left` set at all,
+                // the browser fell back to a static-position calculation
+                // that put the knob around the middle of the track, so
+                // translate-x-5 in the "on" state pushed it ~18px past the
+                // track's own right edge — visibly outside its frame — on
+                // every screen size, not just narrow ones. Pinning the base
+                // position to left-0.5 (matching top-0.5) makes translate-x-0
+                // / translate-x-5 slide the knob exactly between the track's
+                // two 2px-inset resting spots, the standard toggle pattern.
+                'absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white transition-transform ' +
+                (cashEnabled ? 'translate-x-5' : 'translate-x-0')
               }
             />
           </button>

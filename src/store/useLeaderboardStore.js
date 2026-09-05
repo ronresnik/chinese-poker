@@ -18,6 +18,9 @@ export const useLeaderboardStore = create((set) => ({
   status: 'idle', // 'idle' | 'loading' | 'ready' | 'error'
   error: null,
 
+  headToHead: [],
+  headToHeadStatus: 'idle', // 'idle' | 'loading' | 'ready' | 'error'
+
   async fetchTop(count = 50) {
     set({ status: 'loading', error: null })
     try {
@@ -27,6 +30,25 @@ export const useLeaderboardStore = create((set) => ({
       set({ entries, status: 'ready' })
     } catch (err) {
       set({ status: 'error', error: err.message })
+    }
+  },
+
+  // The signed-in viewer's own record against every opponent they've
+  // played — the users/{uid} doc itself only carries totals, not who
+  // they were against, so this reads the sibling headToHead subcollection
+  // (see firestore.rules and recordGameResult below) instead.
+  async fetchHeadToHead(uid) {
+    if (!uid) {
+      set({ headToHead: [], headToHeadStatus: 'idle' })
+      return
+    }
+    set({ headToHeadStatus: 'loading' })
+    try {
+      const snap = await getDocs(collection(db, 'users', uid, 'headToHead'))
+      const records = snap.docs.map((d) => d.data()).sort((a, b) => b.gamesPlayed - a.gamesPlayed)
+      set({ headToHead: records, headToHeadStatus: 'ready' })
+    } catch {
+      set({ headToHeadStatus: 'error' })
     }
   },
 }))
@@ -54,7 +76,25 @@ export async function ensureUserProfile(uid, displayName) {
     uid,
     displayName: displayName ?? 'Player',
     createdAt: serverTimestamp(),
-    stats: { gamesPlayed: 0, gamesWon: 0, gamesLost: 0 },
+    // Online games only — see recordGameResult's isOnline branch. A
+    // vs-computer game never updates this doc at all, so these numbers
+    // can't be inflated by farming wins against the bot.
+    stats: {
+      gamesPlayed: 0,
+      gamesWon: 0,
+      gamesLost: 0,
+      // columnsWon/wins5_0/wins4_1/wins3_2/currentWinStreak/bestWinStreak:
+      // see recordGameResult and firestore.rules' users/{uid} update
+      // rule, which reads each with a `.get(field, 0)` fallback
+      // specifically so a profile created before these existed doesn't
+      // get permanently locked out of ever updating again.
+      columnsWon: 0,
+      wins5_0: 0,
+      wins4_1: 0,
+      wins3_2: 0,
+      currentWinStreak: 0,
+      bestWinStreak: 0,
+    },
   }
   await setDoc(ref, profile)
   return profile
@@ -75,21 +115,29 @@ async function waitForGameDoc(gameId, attempts = 5) {
 }
 
 /**
- * Records one finished game — online or vs-computer alike, see
+ * Records one finished game — online or vs-computer, see
  * useLocalGameStore.js/LocalGame.jsx and useOnlineGameStore.js for the two
- * callers. Online, this runs independently on EACH client once it
- * observes the room has reached "complete"; every write here is scoped to
- * that caller's own uid, which is what firestore.rules actually allows
- * (see docs/firebase-schema.md). Only the room host writes the shared,
- * immutable `games/{gameId}` match record, to avoid two clients racing to
- * create the same doc; the non-host briefly waits for it to land before
- * bumping its own stats, since the rules require that record to already
- * exist and name the winner before a gamesWon increment is allowed.
+ * callers, distinguished here by `isOnline`. Both kinds write the same
+ * immutable `games/{gameId}` audit record and the same headToHead entry
+ * against whoever the opponent was (the bot's constant uid works there
+ * exactly like a real player's). They diverge after that: only an online
+ * result touches `users/{uid}.stats` — the ranked leaderboard, win
+ * streaks, and margin counts are online-only by construction, so a solo
+ * player can't inflate them by farming wins against the bot. "How much
+ * you've won vs. the Computer" still exists, it's just the headToHead
+ * entry for opponentUid 'bot', not a users/{uid}.stats field.
  *
- * A vs-computer game has only one real client, so it always takes the
- * `isHost: true` path — structurally the same write (`players` just
- * includes the bot's constant uid rather than a second real player), so
- * no rule or code path here needs to know which kind of game this was.
+ * Online, this runs independently on EACH client once it observes the
+ * room has reached "complete"; every write here is scoped to that
+ * caller's own uid, which is what firestore.rules actually allows (see
+ * docs/firebase-schema.md). Only the room host writes the shared `games`
+ * record, to avoid two clients racing to create the same doc; the
+ * non-host briefly waits for it to land before bumping its own stats,
+ * since the rules require that record to already exist and name the
+ * winner before a gamesWon increment is allowed. A vs-computer game has
+ * only one real client, so it always takes the `isHost: true` path —
+ * structurally the same `games` write either way (`players` just
+ * includes the bot's constant uid rather than a second real player).
  */
 export async function recordGameResult({
   gameId,
@@ -100,6 +148,7 @@ export async function recordGameResult({
   opponentName,
   cashGame,
   result,
+  isOnline,
 }) {
   if (isHost) {
     await setDoc(doc(db, 'games', gameId), {
@@ -131,22 +180,86 @@ export async function recordGameResult({
     return { recorded: false, reason: 'match record was never created by the host' }
   }
 
-  await ensureUserProfile(myUid, myName)
-  const userRef = doc(db, 'users', myUid)
+  const h2hRef = doc(db, 'users', myUid, 'headToHead', opponentUid)
   const won = result.winnerUid === myUid
   const lost = result.winnerUid === opponentUid
 
+  // The shared part of both branches below: read whatever head-to-head
+  // record already exists against this opponent (there may be none yet)
+  // and fold this game's outcome into it. tx.set (a full overwrite, not
+  // tx.update's partial merge) either way: on a brand-new opponent this
+  // doc doesn't exist yet, so update() would fail outright, and
+  // firestore.rules' create/update split expects the complete shape in
+  // both cases anyway.
+  function foldHeadToHead(tx, h2hSnap) {
+    const h2h = h2hSnap.exists() ? h2hSnap.data() : { wins: 0, losses: 0, gamesPlayed: 0 }
+    tx.set(h2hRef, {
+      opponentUid,
+      opponentName,
+      wins: h2h.wins + (won ? 1 : 0),
+      losses: h2h.losses + (lost ? 1 : 0),
+      gamesPlayed: h2h.gamesPlayed + 1,
+      lastGameId: gameId,
+    })
+  }
+
+  if (!isOnline) {
+    // Vs-computer: head-to-head against the bot is the entire record —
+    // see this function's doc comment for why the ranked leaderboard
+    // stats below never see a vs-computer game at all.
+    await runTransaction(db, async (tx) => {
+      const h2hSnap = await tx.get(h2hRef)
+      foldHeadToHead(tx, h2hSnap)
+    })
+    return { recorded: true }
+  }
+
+  await ensureUserProfile(myUid, myName)
+  const userRef = doc(db, 'users', myUid)
+  const columnsWonThisGame = result.columnsWon?.[myUid] ?? 0
+  // The winning margin (5, 4, or 3 columns — see game/README.md's "no
+  // column is ever drawn" proof, which is what makes those the only
+  // three possibilities) only means anything when this player actually
+  // won; unused otherwise, so it's fine that it's just this player's own
+  // column count rather than something more elaborate.
+  const margin = won ? columnsWonThisGame : null
+
   await runTransaction(db, async (tx) => {
-    const snap = await tx.get(userRef)
-    const stats = snap.data().stats
+    // Every read in a Firestore transaction must happen before any write
+    // — both docs are read here first, then both written below.
+    const userSnap = await tx.get(userRef)
+    const h2hSnap = await tx.get(h2hRef)
+
+    const stats = userSnap.data().stats
+    // .get-with-fallback equivalent for a profile written before these
+    // fields existed — see ensureUserProfile and firestore.rules' matching
+    // .get(field, 0) on the same fields, which is what actually allows an
+    // update from a legacy document to succeed at all.
+    const columnsWon = stats.columnsWon ?? 0
+    const wins5_0 = stats.wins5_0 ?? 0
+    const wins4_1 = stats.wins4_1 ?? 0
+    const wins3_2 = stats.wins3_2 ?? 0
+    const currentWinStreak = stats.currentWinStreak ?? 0
+    const bestWinStreak = stats.bestWinStreak ?? 0
+
+    const newCurrentWinStreak = won ? currentWinStreak + 1 : 0
+
     tx.update(userRef, {
       lastGameId: gameId,
       stats: {
         gamesPlayed: stats.gamesPlayed + 1,
         gamesWon: stats.gamesWon + (won ? 1 : 0),
         gamesLost: stats.gamesLost + (lost ? 1 : 0),
+        columnsWon: columnsWon + columnsWonThisGame,
+        wins5_0: wins5_0 + (margin === 5 ? 1 : 0),
+        wins4_1: wins4_1 + (margin === 4 ? 1 : 0),
+        wins3_2: wins3_2 + (margin === 3 ? 1 : 0),
+        currentWinStreak: newCurrentWinStreak,
+        bestWinStreak: Math.max(bestWinStreak, newCurrentWinStreak),
       },
     })
+
+    foldHeadToHead(tx, h2hSnap)
   })
 
   return { recorded: true }

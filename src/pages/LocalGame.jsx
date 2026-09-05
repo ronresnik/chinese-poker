@@ -37,13 +37,15 @@ export default function LocalGame() {
   }, [])
 
   // Vs-computer games never touched Firestore at all until now, which is
-  // the main reason the leaderboard looked broken/permanently empty: this
-  // is the mode actually played in this sandbox, and the leaderboard only
-  // ever recorded 2-real-player online matches. The write is otherwise
-  // identical to the online path (see useLeaderboardStore.js's
-  // recordGameResult) — the bot's constant uid just takes the place of a
-  // second real player, which the Firestore rules don't need to
-  // distinguish. Best-effort and non-blocking: recording failure (or no
+  // the main reason the leaderboard looked broken/permanently empty
+  // before recording vs-computer games at all: this is the mode actually
+  // played in this sandbox. isOnline: false keeps it that way on purpose
+  // even now that it IS recorded — see useLeaderboardStore.js's
+  // recordGameResult doc comment: only a real head-to-head result touches
+  // the ranked leaderboard stats, so a solo player can't inflate them by
+  // farming wins against the bot. "How much you've won vs. the Computer"
+  // still gets recorded, as a headToHead entry rather than a leaderboard
+  // stat. Best-effort and non-blocking: recording failure (or no
   // signed-in user at all, e.g. a fully offline device) must never affect
   // the result already on screen, only add a footnote to it.
   useEffect(() => {
@@ -59,6 +61,7 @@ export default function LocalGame() {
       myName: state.players[HUMAN_UID].name,
       opponentUid: BOT_UID,
       opponentName: state.players[BOT_UID].name,
+      isOnline: false,
       cashGame: state.cashGame,
       result: state.result,
     })

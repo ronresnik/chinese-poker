@@ -219,20 +219,64 @@ most-likely-first per operation, and the whole block is copyable.
 ```
 users/{uid}
   uid, displayName, createdAt
-  stats/
+  stats/                                  -- ONLINE games only, see below
     gamesPlayed, gamesWon, gamesLost     number, monotonically non-decreasing
+    columnsWon                           number — cumulative columns won across all games
+    wins5_0, wins4_1, wins3_2            number — online wins by exact column margin
+    currentWinStreak                     number — resets to 0 on any loss
+    bestWinStreak                        number — the high-water mark of currentWinStreak
   lastGameId                              string — audit pointer, see rules
+
+  headToHead/{opponentUid}                -- one doc per opponent ever played, ONLINE OR BOT
+    opponentUid, opponentName
+    wins, losses, gamesPlayed             this player's record against that one opponent
+    lastGameId                            string — audit pointer, see rules
 
 games/{gameId}                            -- immutable once created
   players: [uidA, uidB]
   playerNames: { [uid]: name }
   cashGame: { enabled, valuePerColumn, currency }
+  winnerUid                               -- top level; see the comment on this field
+                                             in useLeaderboardStore.js's recordGameResult
   result: { columnsWon: { [uid]: n }, winnerUid, sweep: bool, payout: number }
   startedAt, endedAt
 ```
 
 The leaderboard is just `users` ordered by `stats.gamesWon desc` — a plain
-single-field `orderBy`, so no composite index is required.
+single-field `orderBy`, so no composite index is required. `headToHead` is
+a subcollection rather than a nested map field on `users/{uid}` itself —
+see the comment on `match /headToHead/{opponentUid}` in firestore.rules
+for why: validating "only this one key of an arbitrarily-keyed map
+changed, and only in a valid way" is a lot more rule surface to get
+subtly wrong with no emulator to check it against than one more
+collection with the same shape of rule `users/{uid}` already has. The
+bot's constant uid (`BOT_UID` in useLocalGameStore.js) works as an
+`opponentUid` here exactly like a real player's would — "your record vs.
+the Computer" is just this subcollection with `opponentUid == 'bot'`.
+
+**`stats` is online-only.** A vs-computer game never writes to
+`users/{uid}.stats` at all — see `recordGameResult`'s `isOnline` param in
+useLeaderboardStore.js. Only the `headToHead` entry for `opponentUid ==
+'bot'` is updated, exactly like it would be for any other opponent. This
+is deliberate: `stats` backs the ranked leaderboard, and without this
+split a solo player could inflate their rank by farming wins against the
+bot with nobody else involved. "How many the computer has won vs. how
+many you've won" is shown from that same headToHead entry, not from
+`stats`.
+
+Every one of these stats fields is validated the same way the original
+three were: `columnsWon` is bounded to the 0-5 a single game can actually
+add; `wins5_0`/`wins4_1`/`wins3_2` may each move by at most 1 per write,
+and only the one matching the actual column split of the cited game (see
+firestore.rules' `myColumnsWon`) — not just "any win", the specific
+5-0/4-1/3-2 this one was; `currentWinStreak` may only reset to 0 or
+extend by exactly 1, and extending requires citing the same real win
+`gamesWon` already requires; `bestWinStreak` must equal the higher of its
+old value and the streak this same write just set, never anything else.
+See firestore.rules' `users/{uid}` `allow update` for the exact
+expressions — none of it is stronger than "can't be fabricated out of
+thin air," the same limit the original three fields already had (see
+Trust model below).
 
 ---
 
@@ -276,6 +320,26 @@ doesn't expose hands or outcomes — but it's a real narrowing of the
 privacy assumption this section used to lean on, taken on deliberately in
 exchange for a code a person can actually use, not an oversight. See the
 comment on `newRoomId` for the full writeup.
+
+**The browsable "Open Rooms" list on Home.jsx goes one step further than
+brute-forceability: it makes every waiting room discoverable on
+purpose**, no scanning required. This uses a second, small RTDB index,
+`lobby/{roomId}` (see `database.rules.json` — present but unused since
+Step 2, wired up in `firebase/rooms.js`'s `publishToLobby` /
+`subscribeOpenRooms`), because nothing grants a broad `.read` over
+`rooms` itself for a "list every waiting room" query to run against —
+only `lobby` does, deliberately, at its own top level. A room hosted from
+this app is listed for any signed-in user to see and join with one tap
+from the moment it's created until either a second player joins or the
+host leaves; sharing a code out of band is no longer the only way in, on
+purpose. `lobby` entries carry the same non-sensitive shape as `meta`
+(host/guest names, cash-game info, status) — never card data — so this
+doesn't open any new category of leak, only makes the existing "meta is
+readable by anyone" reach further in practice than "you'd have to guess
+the code" did. There's no server-side cleanup for a lobby entry whose
+room was abandoned before a guest joined (free-tier, no Cloud Functions —
+same limitation as everywhere else in this doc); Home.jsx hides anything
+older than two hours as a client-side mitigation, not a real fix.
 
 Two things are **explicitly not guaranteed**, because they'd require a
 trusted server (a paid Cloud Functions plan) to referee:

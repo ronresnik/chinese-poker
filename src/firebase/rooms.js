@@ -148,6 +148,60 @@ export async function createRoom({ roomId, hostUid, hostName, cashGame }) {
     }),
   )
   setupPresence(roomId, hostUid)
+
+  // Best-effort, and deliberately separate from the writes above: a
+  // player must be able to host and share a room code even if this one
+  // fails, since the code itself still works for a direct join either
+  // way (see docs/firebase-schema.md's "browsable lobby" section for the
+  // trust-model consequence of this list existing at all).
+  publishToLobby(roomId, { hostUid, hostName, cashGame }).catch(() => {})
+}
+
+/**
+ * `lobby/{roomId}` is a second, small index alongside the real room — see
+ * database.rules.json's `lobby` rules (present since Step 2 but unused
+ * until now). It exists because `rooms/{roomId}/meta` can only ever be
+ * read once you already know a specific roomId: nothing grants `.read`
+ * on `rooms` itself, so a query like "show me every waiting room" has no
+ * path to run against (this is the same "RTDB rules aren't a filter"
+ * shape as every other broad-read lesson in this file — a query is a
+ * broad read, evaluated at the node it's issued against, not per-child).
+ * `lobby` does grant top-level `.read` to any signed-in user, on purpose,
+ * specifically so Home.jsx can list open rooms instead of requiring a
+ * code shared out of band. See newRoomId's comment for what that
+ * trades away.
+ */
+async function publishToLobby(roomId, { hostUid, hostName, cashGame }) {
+  await update(ref(rtdb), {
+    [`lobby/${roomId}/hostUid`]: hostUid,
+    [`lobby/${roomId}/hostName`]: hostName,
+    [`lobby/${roomId}/status`]: 'waiting',
+    [`lobby/${roomId}/cashGame`]: cashGame,
+    [`lobby/${roomId}/createdAt`]: serverTimestamp(),
+  })
+}
+
+// Removes a room from the browsable list — called once it stops being
+// something a stranger should be able to tap into (a guest joined and
+// dealing is starting, or the host cancelled while still waiting).
+// Best-effort: a lobby entry outliving its room only means a stale list
+// row, never a broken game, so this is never awaited by its callers.
+export async function closeLobbyEntry(roomId) {
+  await update(ref(rtdb), { [`lobby/${roomId}`]: null })
+}
+
+/**
+ * Live list of open rooms for Home.jsx's "browse and tap to join"
+ * flow — every entry currently in `lobby`, most-recently-created first.
+ * Filtering to just `status === 'waiting'` and dropping stale entries
+ * (a host who closed the tab without cancelling leaves theirs behind
+ * indefinitely, see closeLobbyEntry) is left to the caller: the raw
+ * per-room write pattern here doesn't lend itself to an RTDB query, and
+ * the whole list is expected to stay small enough that filtering
+ * client-side is simpler than trying to index it server-side.
+ */
+export function subscribeOpenRooms(onChange) {
+  return onValue(ref(rtdb, 'lobby'), (snap) => onChange(snap.val()))
 }
 
 // `facts` carries the room's host/guest uids so a denial can say *why*
@@ -168,6 +222,17 @@ export async function joinRoom({ roomId, guestUid, guestName, facts = {} }) {
     }),
   )
   setupPresence(roomId, guestUid)
+
+  // Best-effort and separate from the writes above, same reasoning as
+  // publishToLobby: the actual join already succeeded regardless of
+  // whether this one lands, and a lobby entry that still reads "waiting"
+  // for a room that's actually full just means the next person to tap it
+  // gets the ordinary "already full" error on the real join attempt.
+  update(ref(rtdb), {
+    [`lobby/${roomId}/guestUid`]: guestUid,
+    [`lobby/${roomId}/guestName`]: guestName,
+    [`lobby/${roomId}/status`]: 'full',
+  }).catch(() => {})
 }
 
 /**
@@ -183,6 +248,10 @@ export async function dealRoom({ roomId, hostUid, guestUid }) {
   await guarded('deal', `rooms/${roomId}/meta/status`, facts, () =>
     update(ref(rtdb), { [`rooms/${roomId}/meta/status`]: 'dealing' }),
   )
+  // The room stops being an open seat for a stranger to tap into the
+  // moment it actually has two players — best-effort, matching every
+  // other lobby write (see publishToLobby).
+  closeLobbyEntry(roomId).catch(() => {})
 
   const dealUpdates = {}
   for (const uid of [hostUid, guestUid]) {

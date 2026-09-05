@@ -421,6 +421,7 @@ export const useOnlineGameStore = create((set, get) => ({
       myName,
       opponentUid,
       opponentName: room.players?.[opponentUid]?.displayName ?? 'Opponent',
+      isOnline: true,
       cashGame: room.meta.cashGame,
       result,
     })

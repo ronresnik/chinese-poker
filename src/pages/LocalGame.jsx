@@ -7,6 +7,31 @@ import { maskHiddenRow } from '../game/board.js'
 import { recordGameResult, newLocalGameId } from '../store/useLeaderboardStore.js'
 import GameScreen from '../components/GameScreen.jsx'
 
+// The local engine's `state.result` is built entirely from HUMAN_UID/
+// BOT_UID ('you'/'bot' — see useLocalGameStore.js), since that's all the
+// engine itself ever knows about; it has no idea what the signed-in
+// player's real Firebase uid is. recordGameResult, though, writes
+// `players: [myUid, opponentUid]` using the REAL uid alongside the
+// literal 'bot' uid — so a result.winnerUid of 'you' (unchanged) ends up
+// compared against a players array that only contains the real uid and
+// 'bot'. 'you' is in neither, so firestore.rules' `winnerUid in players`
+// check on games/{gameId}'s create rule rejects the write outright.
+// 'bot' happens to still match one of the two array entries, which is
+// exactly why this only ever failed when the HUMAN won, never when the
+// bot did — a real, deterministic bug, not a Firebase deployment issue.
+// Only winnerUid and columnsWon's keys carry a uid recordGameResult
+// actually reads for this call; nothing else in `result` is uid-keyed.
+function forFirestore(result, realUid) {
+  const swapUid = (uid) => (uid === HUMAN_UID ? realUid : uid)
+  return {
+    ...result,
+    winnerUid: result.winnerUid === null ? null : swapUid(result.winnerUid),
+    columnsWon: result.columnsWon
+      ? Object.fromEntries(Object.entries(result.columnsWon).map(([uid, n]) => [swapUid(uid), n]))
+      : result.columnsWon,
+  }
+}
+
 export default function LocalGame() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -63,7 +88,7 @@ export default function LocalGame() {
       opponentName: state.players[BOT_UID].name,
       isOnline: false,
       cashGame: state.cashGame,
-      result: state.result,
+      result: forFirestore(state.result, user.uid),
     })
       .then((outcome) => {
         if (outcome && outcome.recorded === false) setStatsNote(outcome.reason)

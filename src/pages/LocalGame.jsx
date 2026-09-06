@@ -69,8 +69,18 @@ export default function LocalGame() {
         if (outcome && outcome.recorded === false) setStatsNote(outcome.reason)
       })
       .catch((err) => setStatsNote(err.message))
+    // user?.uid IS a real dependency, not just an exhaustive-deps nag: a
+    // brand-new visitor's anonymous sign-in is still in flight (no cached
+    // session to resume) when a quick vs-computer game reaches COMPLETE,
+    // so the very first run of this effect hits the `!user?.uid` guard
+    // above and bails. Without user?.uid listed here, this effect would
+    // never fire again once sign-in actually finished — neither
+    // state?.status nor gameId change again — so that game's result
+    // (and its headToHead entry) would silently never get recorded, with
+    // no error shown anywhere, exactly the "new player, nothing happens"
+    // failure mode this was reported as.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state?.status, gameId])
+  }, [state?.status, gameId, user?.uid])
 
   // engine.js's lastCoachTip is a single shared field the bot's own moves
   // also write to — capture only the human's tips here so a bot move

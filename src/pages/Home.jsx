@@ -116,7 +116,7 @@ export default function Home() {
 
   if (step === 'name') {
     return (
-      <div className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center gap-6 px-5 py-8">
+      <div className="mx-auto flex w-full max-w-sm flex-1 flex-col gap-6 px-5 py-8">
         <div className="text-center">
           <h1 className="font-display text-3xl font-bold text-gold-light">5-Column Poker</h1>
           <p className="mt-1 text-sm text-white/60">Five hands. One board. Winner takes the columns.</p>

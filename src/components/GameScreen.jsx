@@ -74,6 +74,21 @@ export default function GameScreen({
   const openForPlacement = isPlacing && isMyTurn ? openColumnsForPlacement(myBoard) : []
   const openForSwap = isSwap && !myLocked ? COLUMNS : []
 
+  // Row-by-row placement (see game/board.js's openColumnsForPlacement)
+  // narrows to exactly one legal column whenever every other column in
+  // the current row is already filled — same as the very first row,
+  // which is dealt automatically with no tap at all, the player has no
+  // real choice at that point, so skip the extra tap and place it the
+  // instant it becomes the only option instead of making them click a
+  // column that was never really a decision.
+  const onlyOpenColumn = openForPlacement.length === 1 ? openForPlacement[0] : null
+  useEffect(() => {
+    if (isPlacing && isMyTurn && nextCard && onlyOpenColumn) {
+      onPlaceCard(onlyOpenColumn)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlacing, isMyTurn, onlyOpenColumn, cardKey(nextCard)])
+
   const opponentUid = result ? Object.keys(result.columnsWon).find((u) => u !== myUid) : null
 
   // The moment `status` reaches showdown/complete, both stores start

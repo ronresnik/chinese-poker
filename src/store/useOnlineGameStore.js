@@ -11,6 +11,7 @@ import {
   publishInitialHandRank,
   publishInitialBoard,
   placeCardOnline,
+  healStuckPlacementStatus,
   chooseSwapOnline,
   markComplete,
   subscribeMeta,
@@ -115,6 +116,7 @@ let opponentPrivateUnsub = null
 let dealTriggered = false
 let initialBoardTriggered = false
 let completeHandled = false
+let stuckPlacementHealTriggered = false
 
 export const useOnlineGameStore = create((set, get) => ({
   ...initialState,
@@ -235,6 +237,7 @@ export const useOnlineGameStore = create((set, get) => ({
     dealTriggered = false
     initialBoardTriggered = false
     completeHandled = false
+    stuckPlacementHealTriggered = false
     set({ ...initialState, roomId, myUid: uid, myName: name, isHost, status: 'waiting' })
 
     metaUnsub = subscribeMeta(roomId, (meta) => {
@@ -270,6 +273,32 @@ export const useOnlineGameStore = create((set, get) => ({
       myBoard: mergeHidden(myPublicBoard, get().myPrivate?.hiddenCardByCol),
       opponentBoard: mergeHidden(opponentPublicBoard, get().opponentPrivate?.hiddenCardByCol),
     })
+
+    // Self-heals a race in placeCardOnline's own bothBoardsFull check (see
+    // healStuckPlacementStatus's doc comment in firebase/rooms.js): meta
+    // and players are separate listeners, so the placing client's
+    // cross-listener view of the opponent's board can still read one card
+    // short at the exact instant the truly-final card lands, leaving
+    // status stuck at 'placing' with nobody left who has anywhere to
+    // place. This client's OWN merged view just got updated above — if it
+    // now shows both boards genuinely full while status still says
+    // 'placing', fix it. Guarded per-attach (not per this exact
+    // condition) since the fix is a single idempotent field: even if both
+    // clients race to write it, or this fires again on an unrelated
+    // room-change while a fix is already in flight, writing 'swap' when
+    // it's already 'swap' is a no-op.
+    if (
+      room.meta.status === 'placing' &&
+      opponentUid &&
+      totalPlaced(myPublicBoard) === 25 &&
+      totalPlaced(opponentPublicBoard) === 25 &&
+      !stuckPlacementHealTriggered
+    ) {
+      stuckPlacementHealTriggered = true
+      healStuckPlacementStatus({ roomId: get().roomId }).catch(() => {
+        stuckPlacementHealTriggered = false
+      })
+    }
 
     // Host-only: deal the moment a guest has joined a still-"waiting" room.
     if (isHost && room.meta.status === 'waiting' && room.meta.guestUid && !dealTriggered) {

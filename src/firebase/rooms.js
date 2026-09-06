@@ -362,6 +362,30 @@ export async function placeCardOnline({ roomId, uid, opponentTurnUid, col, card,
   )
 }
 
+/**
+ * Self-heal for a race in placeCardOnline above: `bothBoardsFull` is
+ * computed from the placing client's OWN cross-listener view of the
+ * opponent's board (meta and players are separate listeners — see
+ * useOnlineGameStore.js's _onRoomChange), which can still be one card
+ * behind at the exact instant the truly-final card is placed. When that
+ * happens, the write above leaves meta/status at 'placing' and hands the
+ * turn to a player who has no columns left to place into — a permanent
+ * stall, since nothing else ever re-checks the condition afterward. Both
+ * swap cards are already sitting in each player's private data from the
+ * initial deal (see game/dealPlan.js), so — unlike the local engine —
+ * there's nothing left to assign here; the fix really is just this one
+ * field. Called from _onRoomChange on EITHER client whenever ITS OWN
+ * merged view shows both boards full while status still reads 'placing',
+ * so whichever client's listeners catch up to the true state first
+ * corrects it. Safe for both to attempt, or for this to run when nothing
+ * is actually stuck: writing 'swap' when it's already 'swap' is a no-op,
+ * and database.rules.json's meta/status rule permits either the host or
+ * guest to write it.
+ */
+export async function healStuckPlacementStatus({ roomId }) {
+  await update(ref(rtdb), { [`rooms/${roomId}/meta/status`]: 'swap' })
+}
+
 export async function chooseSwapOnline({ roomId, uid, col, swapCard, bothLocked }) {
   // The public board's hidden slot already reads faceDown:true from the
   // original placement and never needs to change — a swap only ever

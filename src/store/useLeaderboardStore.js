@@ -100,6 +100,24 @@ export async function ensureUserProfile(uid, displayName) {
   return profile
 }
 
+// Firestore's own permission-denied message is the same generic string
+// ("Missing or insufficient permissions.") no matter which of the several
+// writes below actually triggered it — reported once, that's genuinely
+// impossible to act on: is it the games/{gameId} create, the vs-computer
+// headToHead write, or the online stats transaction? Each is wrapped with
+// this so the step name rides along in statsNote, turning "insufficient
+// permissions" into "insufficient permissions writing headToHead (bot)" —
+// the difference between a guess and an actual diagnosis.
+async function withStep(step, fn) {
+  try {
+    return await fn()
+  } catch (err) {
+    const wrapped = new Error(`${err.message} [writing ${step}]`)
+    wrapped.cause = err
+    throw wrapped
+  }
+}
+
 // Returns null rather than throwing when the host's match record never
 // lands. Nothing about a finished game depends on the leaderboard, so a
 // missing record must degrade to "stats not counted", never to an error
@@ -151,27 +169,29 @@ export async function recordGameResult({
   isOnline,
 }) {
   if (isHost) {
-    await setDoc(doc(db, 'games', gameId), {
-      players: [myUid, opponentUid],
-      playerNames: { [myUid]: myName, [opponentUid]: opponentName },
-      // winnerUid has to sit at the TOP level, not only inside `result`:
-      // firestore.rules validates `request.resource.data.winnerUid in
-      // request.resource.data.players` on create, and the users/{uid}
-      // rule reads `get(games/$(lastGameId)).data.winnerUid` to authorize
-      // a gamesWon increment. Writing it only under `result` made both
-      // reads undefined, so every match record was rejected and the
-      // games collection stayed permanently empty.
-      winnerUid: result.winnerUid ?? null,
-      cashGame,
-      result: {
-        columnsWon: result.columnsWon,
+    await withStep(`games/${gameId}`, () =>
+      setDoc(doc(db, 'games', gameId), {
+        players: [myUid, opponentUid],
+        playerNames: { [myUid]: myName, [opponentUid]: opponentName },
+        // winnerUid has to sit at the TOP level, not only inside `result`:
+        // firestore.rules validates `request.resource.data.winnerUid in
+        // request.resource.data.players` on create, and the users/{uid}
+        // rule reads `get(games/$(lastGameId)).data.winnerUid` to authorize
+        // a gamesWon increment. Writing it only under `result` made both
+        // reads undefined, so every match record was rejected and the
+        // games collection stayed permanently empty.
         winnerUid: result.winnerUid ?? null,
-        sweep: result.sweep,
-        payout: result.payout,
-      },
-      startedAt: serverTimestamp(),
-      endedAt: serverTimestamp(),
-    })
+        cashGame,
+        result: {
+          columnsWon: result.columnsWon,
+          winnerUid: result.winnerUid ?? null,
+          sweep: result.sweep,
+          payout: result.payout,
+        },
+        startedAt: serverTimestamp(),
+        endedAt: serverTimestamp(),
+      }),
+    )
   } else if (!(await waitForGameDoc(gameId))) {
     // The host never wrote the record (offline, closed the tab, or the
     // Firestore rules aren't published). Their own stats still count;
@@ -207,14 +227,16 @@ export async function recordGameResult({
     // Vs-computer: head-to-head against the bot is the entire record —
     // see this function's doc comment for why the ranked leaderboard
     // stats below never see a vs-computer game at all.
-    await runTransaction(db, async (tx) => {
-      const h2hSnap = await tx.get(h2hRef)
-      foldHeadToHead(tx, h2hSnap)
-    })
+    await withStep(`headToHead/${opponentUid}`, () =>
+      runTransaction(db, async (tx) => {
+        const h2hSnap = await tx.get(h2hRef)
+        foldHeadToHead(tx, h2hSnap)
+      }),
+    )
     return { recorded: true }
   }
 
-  await ensureUserProfile(myUid, myName)
+  await withStep(`users/${myUid} (ensureUserProfile)`, () => ensureUserProfile(myUid, myName))
   const userRef = doc(db, 'users', myUid)
   const columnsWonThisGame = result.columnsWon?.[myUid] ?? 0
   // The winning margin (5, 4, or 3 columns — see game/README.md's "no
@@ -224,43 +246,45 @@ export async function recordGameResult({
   // column count rather than something more elaborate.
   const margin = won ? columnsWonThisGame : null
 
-  await runTransaction(db, async (tx) => {
-    // Every read in a Firestore transaction must happen before any write
-    // — both docs are read here first, then both written below.
-    const userSnap = await tx.get(userRef)
-    const h2hSnap = await tx.get(h2hRef)
+  await withStep(`users/${myUid} + headToHead/${opponentUid} (online stats)`, () =>
+    runTransaction(db, async (tx) => {
+      // Every read in a Firestore transaction must happen before any write
+      // — both docs are read here first, then both written below.
+      const userSnap = await tx.get(userRef)
+      const h2hSnap = await tx.get(h2hRef)
 
-    const stats = userSnap.data().stats
-    // .get-with-fallback equivalent for a profile written before these
-    // fields existed — see ensureUserProfile and firestore.rules' matching
-    // .get(field, 0) on the same fields, which is what actually allows an
-    // update from a legacy document to succeed at all.
-    const columnsWon = stats.columnsWon ?? 0
-    const wins5_0 = stats.wins5_0 ?? 0
-    const wins4_1 = stats.wins4_1 ?? 0
-    const wins3_2 = stats.wins3_2 ?? 0
-    const currentWinStreak = stats.currentWinStreak ?? 0
-    const bestWinStreak = stats.bestWinStreak ?? 0
+      const stats = userSnap.data().stats
+      // .get-with-fallback equivalent for a profile written before these
+      // fields existed — see ensureUserProfile and firestore.rules' matching
+      // .get(field, 0) on the same fields, which is what actually allows an
+      // update from a legacy document to succeed at all.
+      const columnsWon = stats.columnsWon ?? 0
+      const wins5_0 = stats.wins5_0 ?? 0
+      const wins4_1 = stats.wins4_1 ?? 0
+      const wins3_2 = stats.wins3_2 ?? 0
+      const currentWinStreak = stats.currentWinStreak ?? 0
+      const bestWinStreak = stats.bestWinStreak ?? 0
 
-    const newCurrentWinStreak = won ? currentWinStreak + 1 : 0
+      const newCurrentWinStreak = won ? currentWinStreak + 1 : 0
 
-    tx.update(userRef, {
-      lastGameId: gameId,
-      stats: {
-        gamesPlayed: stats.gamesPlayed + 1,
-        gamesWon: stats.gamesWon + (won ? 1 : 0),
-        gamesLost: stats.gamesLost + (lost ? 1 : 0),
-        columnsWon: columnsWon + columnsWonThisGame,
-        wins5_0: wins5_0 + (margin === 5 ? 1 : 0),
-        wins4_1: wins4_1 + (margin === 4 ? 1 : 0),
-        wins3_2: wins3_2 + (margin === 3 ? 1 : 0),
-        currentWinStreak: newCurrentWinStreak,
-        bestWinStreak: Math.max(bestWinStreak, newCurrentWinStreak),
-      },
-    })
+      tx.update(userRef, {
+        lastGameId: gameId,
+        stats: {
+          gamesPlayed: stats.gamesPlayed + 1,
+          gamesWon: stats.gamesWon + (won ? 1 : 0),
+          gamesLost: stats.gamesLost + (lost ? 1 : 0),
+          columnsWon: columnsWon + columnsWonThisGame,
+          wins5_0: wins5_0 + (margin === 5 ? 1 : 0),
+          wins4_1: wins4_1 + (margin === 4 ? 1 : 0),
+          wins3_2: wins3_2 + (margin === 3 ? 1 : 0),
+          currentWinStreak: newCurrentWinStreak,
+          bestWinStreak: Math.max(bestWinStreak, newCurrentWinStreak),
+        },
+      })
 
-    foldHeadToHead(tx, h2hSnap)
-  })
+      foldHeadToHead(tx, h2hSnap)
+    }),
+  )
 
   return { recorded: true }
 }

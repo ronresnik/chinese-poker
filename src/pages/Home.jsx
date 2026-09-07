@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useAuthStore } from '../store/useAuthStore.js'
+import { doc, getDoc } from 'firebase/firestore'
+import { db } from '../firebase/config.js'
+import { useAuthStore, signInWithGoogleAccount } from '../store/useAuthStore.js'
 import { useOnlineGameStore } from '../store/useOnlineGameStore.js'
+import { claimUsername } from '../store/useLeaderboardStore.js'
 import { sanitizeRoomCode, ROOM_CODE_LENGTH } from '../firebase/roomEntry.js'
 import { subscribeOpenRooms } from '../firebase/rooms.js'
 import { formatCurrency } from '../utils/format.js'
@@ -24,11 +27,13 @@ export default function Home() {
   const hostGame = useOnlineGameStore((s) => s.hostGame)
   const joinGame = useOnlineGameStore((s) => s.joinGame)
 
-  // Two screens rather than one long form: naming yourself and choosing
+  // Three screens rather than one long form: naming yourself and choosing
   // what to play are different decisions, and cramming both onto one
   // screen buried the actual choice (vs. computer vs. online) under
   // name/cash-game controls that only need to be set once. 'choose' is
   // only ever reached with a validated, trimmed name already in hand.
+  // 'username' is Google-only — a brand-new Google sign-in with no
+  // existing profile yet needs to pick one before anything else.
   const [step, setStep] = useState('name')
   const [name, setName] = useState('')
   const [cashEnabled, setCashEnabled] = useState(false)
@@ -38,10 +43,73 @@ export default function Home() {
   const [showJoin, setShowJoin] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  const [googleBusy, setGoogleBusy] = useState(false)
+  const [usernameInput, setUsernameInput] = useState('')
+  const [usernameError, setUsernameError] = useState(null)
 
   const cashGame = { enabled: cashEnabled, valuePerColumn: Number(value) || 0, currency }
   const playerName = name.trim()
   const NAME_REQUIRED_MESSAGE = 'Please enter your name before playing — every game needs to know who you are.'
+
+  // A returning Google sign-in persists across visits (unlike anonymous
+  // auth, which is per-browser) — the moment that resolves, skip straight
+  // past the name screen using whatever username this account already
+  // has, instead of making them type a name it's never actually going to
+  // keep. A brand-new Google account with no profile yet goes to
+  // 'username' instead, exactly once, ever (see claimUsername).
+  useEffect(() => {
+    if (step !== 'name' || authStatus !== 'ready' || !user || user.isAnonymous || !db) return
+    let cancelled = false
+    getDoc(doc(db, 'users', user.uid)).then((snap) => {
+      if (cancelled) return
+      if (snap.exists()) {
+        setName(snap.data().displayName)
+        setStep('choose')
+      } else {
+        setUsernameInput(user.displayName ?? '')
+        setStep('username')
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authStatus, user?.uid, user?.isAnonymous])
+
+  async function handleGoogleSignIn() {
+    setGoogleBusy(true)
+    setError(null)
+    try {
+      const googleUser = await signInWithGoogleAccount()
+      const snap = await getDoc(doc(db, 'users', googleUser.uid))
+      if (snap.exists()) {
+        setName(snap.data().displayName)
+        setStep('choose')
+      } else {
+        setUsernameInput(googleUser.displayName ?? '')
+        setStep('username')
+      }
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setGoogleBusy(false)
+    }
+  }
+
+  async function handleClaimUsername(e) {
+    e.preventDefault()
+    setUsernameError(null)
+    setGoogleBusy(true)
+    try {
+      const profile = await claimUsername(user.uid, usernameInput)
+      setName(profile.displayName)
+      setStep('choose')
+    } catch (err) {
+      setUsernameError(err.message)
+    } finally {
+      setGoogleBusy(false)
+    }
+  }
 
   function handleContinue(e) {
     e.preventDefault()
@@ -147,6 +215,62 @@ export default function Home() {
 
           <button type="submit" className="btn-gold">
             Continue
+          </button>
+        </form>
+
+        {/* Optional upgrade, not a requirement — see
+            useAuthStore.js's signInWithGoogleAccount. Typing a name above
+            still works exactly as before; this is for a player who wants
+            their name/stats to follow them to another device instead of
+            staying stuck to this one browser's anonymous session. */}
+        <div className="flex items-center gap-2 text-xs text-white/25">
+          <div className="h-px flex-1 bg-white/10" />
+          <span>or</span>
+          <div className="h-px flex-1 bg-white/10" />
+        </div>
+        <button type="button" className="btn-ghost" disabled={googleBusy} onClick={handleGoogleSignIn}>
+          {googleBusy ? 'Connecting…' : 'Continue with Google'}
+        </button>
+
+        <p className="text-center text-[10px] text-white/20">{APP_VERSION}</p>
+      </div>
+    )
+  }
+
+  if (step === 'username') {
+    return (
+      <div className="mx-auto flex w-full max-w-sm flex-1 flex-col gap-6 px-5 py-8">
+        <div className="text-center">
+          <h1 className="font-display text-3xl font-bold text-gold-light">Choose a username</h1>
+          <p className="mt-1 text-sm text-white/60">
+            This is how other players see you — pick something unique. You can&rsquo;t change it later.
+          </p>
+        </div>
+
+        <form onSubmit={handleClaimUsername} className="panel flex flex-col gap-4 p-4">
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-white/70">Username</span>
+            <input
+              autoFocus
+              value={usernameInput}
+              onChange={(e) => {
+                setUsernameInput(e.target.value)
+                if (usernameError) setUsernameError(null)
+              }}
+              placeholder="Choose a username"
+              maxLength={20}
+              aria-invalid={!!usernameError}
+              className={
+                'rounded-lg border bg-ink px-3 py-2 text-white outline-none focus:border-gold/60 ' +
+                (usernameError ? 'border-red-500/60' : 'border-white/10')
+              }
+            />
+          </label>
+
+          {usernameError && <ErrorReport message={usernameError} />}
+
+          <button type="submit" className="btn-gold" disabled={googleBusy}>
+            {googleBusy ? 'Checking…' : 'Continue'}
           </button>
         </form>
 

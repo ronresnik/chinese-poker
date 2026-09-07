@@ -3,6 +3,7 @@ import clsx from 'clsx'
 import { COLUMNS, HIDDEN_ROW_INDEX } from '../game/board.js'
 import { columnOutcomesFor } from '../game/scoring.js'
 import { revealCaption } from '../game/reveal.js'
+import { describeHand } from '../game/handEvaluator.js'
 import PlayerBoard from './PlayerBoard.jsx'
 
 const REVEAL_INTERVAL_MS = 1400
@@ -53,6 +54,17 @@ export default function ShowdownReveal({
   // helper, so they can't drift out of step (see game/reveal.js).
   const caption = revealCaption(result.columns, revealed, myUid)
 
+  // Swaps the plain column number for a short hand description ("Two
+  // Pair, Kings and 5s") the instant that column's outcome reveals —
+  // driven by the same `revealed` count as the border colour and the
+  // caption above, so the three can never fall out of step with each
+  // other. Columns not yet revealed pass null through, which
+  // PlayerBoard/ColumnStack fall back to the plain column number for.
+  const myHandLabels = COLUMNS.map((_, i) => (i < revealed ? describeHand(result.columns[i].hands[myUid]) : null))
+  const opponentHandLabels = COLUMNS.map((_, i) =>
+    i < revealed ? describeHand(result.columns[i].hands[opponentUid]) : null,
+  )
+
   return (
     <div
       className="fixed inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/85 px-4 py-6 backdrop-blur-sm"
@@ -60,7 +72,11 @@ export default function ShowdownReveal({
     >
       <div className="w-full max-w-lg text-center text-sm text-white/60">{opponentName}</div>
       <div className="w-full max-w-lg">
-        <PlayerBoard board={maskUnrevealed(opponentBoard, revealed)} columnOutcomes={opponentOutcomes} />
+        <PlayerBoard
+          board={maskUnrevealed(opponentBoard, revealed)}
+          columnOutcomes={opponentOutcomes}
+          columnLabels={opponentHandLabels}
+        />
       </div>
 
       <div className="flex h-10 items-center justify-center">
@@ -81,7 +97,12 @@ export default function ShowdownReveal({
       </div>
 
       <div className="w-full max-w-lg">
-        <PlayerBoard board={maskUnrevealed(myBoard, revealed)} size="md" columnOutcomes={myOutcomes} />
+        <PlayerBoard
+          board={maskUnrevealed(myBoard, revealed)}
+          size="md"
+          columnOutcomes={myOutcomes}
+          columnLabels={myHandLabels}
+        />
       </div>
       <div className="w-full max-w-lg text-center text-sm text-white/60">{myName} (you)</div>
 

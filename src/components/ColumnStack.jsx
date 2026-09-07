@@ -36,7 +36,17 @@ export default function ColumnStack({
 
   return (
     <div className="flex flex-col items-center gap-1">
-      {label && <span className="text-[10px] font-semibold uppercase tracking-wide text-white/40">{label}</span>}
+      {label && (
+        // h-7: a fixed height (rather than growing with the label) keeps
+        // every column's cards starting at the same y-position whether
+        // its label is a single-digit column number or a two-line hand
+        // description — without it, the one column whose hand name wraps
+        // to a second line would push its own cards down relative to the
+        // other four.
+        <span className="flex h-7 items-center text-center text-[10px] font-semibold uppercase leading-tight tracking-wide text-white/40">
+          {label}
+        </span>
+      )}
       <button
         type="button"
         disabled={!tappable}

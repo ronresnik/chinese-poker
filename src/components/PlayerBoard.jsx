@@ -16,6 +16,11 @@ export default function PlayerBoard({
   onPlaceColumn,
   columnOutcomes = {},
   flyingCardKey = null,
+  // Per-column override for the label normally showing the column number
+  // (1-5) — used by ShowdownReveal to swap in a short hand description
+  // ("Two Pair, Kings and 5s") the instant that column's outcome reveals.
+  // Any entry left null/undefined falls back to the plain column number.
+  columnLabels = [],
 }) {
   return (
     <div className="grid grid-cols-5 gap-1 sm:gap-2">
@@ -27,7 +32,7 @@ export default function PlayerBoard({
           tappable={openColumns.includes(col)}
           onTap={() => onPlaceColumn?.(col)}
           outcome={columnOutcomes[col] ?? null}
-          label={`${i + 1}`}
+          label={columnLabels[i] ?? `${i + 1}`}
           flyingCardKey={flyingCardKey}
           columnIndex={i}
         />

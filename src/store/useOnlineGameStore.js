@@ -13,6 +13,8 @@ import {
   placeCardOnline,
   healStuckPlacementStatus,
   chooseSwapOnline,
+  requestRematch as writeRematchReady,
+  resetForNewRound,
   markComplete,
   subscribeMeta,
   subscribePlayers,
@@ -35,7 +37,13 @@ import {
 import { COLUMNS, HIDDEN_ROW_INDEX, openColumnsForPlacement } from '../game/board.js'
 import { coachTipForPlacement, coachTipForSwap } from '../game/aiCoach.js'
 import { evaluateShowdown, calculatePayout } from '../game/scoring.js'
+import { chooseBotPlacement } from '../game/bot.js'
 import { recordGameResult } from './useLeaderboardStore.js'
+
+// Exported for GameScreen/TurnBanner: the countdown they render has to
+// match the actual timeout below exactly, or a player would see "0:00"
+// while still legally able to place, or vice versa.
+export const TURN_DURATION_MS = 30000
 
 // RTDB collapses a fully-populated 0..N sequential-key node into a real JS
 // array on read, but any gap (or an empty column) comes back as an object
@@ -90,6 +98,9 @@ const initialState = {
   opponentPrivate: null, // only populated once readable (showdown/complete)
   cashGame: null,
   turnUid: null,
+  turnStartedAt: null,
+  myRematchReady: false,
+  opponentRematchReady: false,
   myBoard: null,
   opponentBoard: null,
   result: null,
@@ -117,6 +128,45 @@ let dealTriggered = false
 let initialBoardTriggered = false
 let completeHandled = false
 let stuckPlacementHealTriggered = false
+let rematchTriggered = false
+let turnTimeoutHandle = null
+let scheduledTurnKey = null
+
+// If my own turn's 30s runs out, my own client places for me — using the
+// same heuristic the local bot uses — rather than leaving the opponent
+// stuck waiting indefinitely. This can only ever run on the timed-out
+// player's own device: RTDB rules only let a player write their own
+// board, so there is no way for the opponent's client (or anything else,
+// with no Cloud Functions on this free tier) to place on someone else's
+// behalf. If this device is asleep, backgrounded past the OS's JS-timer
+// throttling, or the tab is closed outright, the timer simply never
+// fires and the opponent waits — a real, accepted limitation, not a bug.
+function scheduleTurnTimeout(set, get) {
+  const { room, myUid } = get()
+  if (!room || room.meta.status !== 'placing' || room.meta.turnUid !== myUid || !room.meta.turnStartedAt) {
+    return
+  }
+  // Keyed on the exact turnStartedAt value, not just "it's my turn" —
+  // _onRoomChange fires on every listener event, many of which don't
+  // represent a new turn at all (the opponent's own placement into a
+  // still-not-my-turn board, connection pings, etc.); re-arming the same
+  // timeout on every one of those would keep pushing it further out.
+  const turnKey = `${myUid}-${room.meta.turnStartedAt}`
+  if (turnKey === scheduledTurnKey) return
+  scheduledTurnKey = turnKey
+  if (turnTimeoutHandle) clearTimeout(turnTimeoutHandle)
+
+  const remaining = Math.max(0, TURN_DURATION_MS - (Date.now() - room.meta.turnStartedAt))
+  turnTimeoutHandle = setTimeout(() => {
+    const current = get()
+    if (!current.room || current.room.meta.status !== 'placing' || current.room.meta.turnUid !== myUid) return
+    const card = current.nextCardToPlace()
+    const board = current.myBoard
+    if (!card || !board || openColumnsForPlacement(board).length === 0) return
+    const col = chooseBotPlacement(board, card, current.opponentBoard ?? normalizeBoard())
+    current.place(col)
+  }, remaining)
+}
 
 export const useOnlineGameStore = create((set, get) => ({
   ...initialState,
@@ -238,6 +288,10 @@ export const useOnlineGameStore = create((set, get) => ({
     initialBoardTriggered = false
     completeHandled = false
     stuckPlacementHealTriggered = false
+    rematchTriggered = false
+    scheduledTurnKey = null
+    if (turnTimeoutHandle) clearTimeout(turnTimeoutHandle)
+    turnTimeoutHandle = null
     set({ ...initialState, roomId, myUid: uid, myName: name, isHost, status: 'waiting' })
 
     metaUnsub = subscribeMeta(roomId, (meta) => {
@@ -254,10 +308,56 @@ export const useOnlineGameStore = create((set, get) => ({
   _onRoomChange() {
     if (!latestMeta) return
     const room = { meta: latestMeta, players: latestPlayers ?? {} }
-    const { myUid, isHost } = get()
+    const { myUid, isHost, status: previousStatus } = get()
     const opponentUid = room.meta.hostUid === myUid ? room.meta.guestUid : room.meta.hostUid
 
-    set({ room, opponentUid, cashGame: room.meta.cashGame, turnUid: room.meta.turnUid ?? null, status: room.meta.status })
+    // A rematch (see requestRematch/dealRoom's isRematch) reuses this
+    // same room and re-enters 'dealing' a second time, rather than a
+    // fresh _attach ever running again — so the once-per-room guards
+    // above have to be re-armed by hand right here, the one place that
+    // reliably sees every status transition this room will ever make.
+    if (room.meta.status === 'dealing' && previousStatus !== 'dealing') {
+      initialBoardTriggered = false
+      completeHandled = false
+      rematchTriggered = false
+      set({ result: null, lastCoachTip: null })
+    }
+
+    set({
+      room,
+      opponentUid,
+      cashGame: room.meta.cashGame,
+      turnUid: room.meta.turnUid ?? null,
+      turnStartedAt: room.meta.turnStartedAt ?? null,
+      status: room.meta.status,
+      myRematchReady: !!room.players?.[myUid]?.rematchReady,
+      opponentRematchReady: !!(opponentUid && room.players?.[opponentUid]?.rematchReady),
+    })
+    scheduleTurnTimeout(set, get)
+
+    // Once both players have clicked Rematch, the host's client (only —
+    // players/{uid}'s rule is self-write, so only the host can write the
+    // private hands both players need, same constraint the very first
+    // deal has) starts a fresh game in this same room. rematchTriggered
+    // guards this firing more than once per round; the dealing-transition
+    // reset above re-arms it for the round after that.
+    if (
+      isHost &&
+      room.meta.status === 'complete' &&
+      room.meta.hostUid &&
+      room.meta.guestUid &&
+      room.players?.[room.meta.hostUid]?.rematchReady &&
+      room.players?.[room.meta.guestUid]?.rematchReady &&
+      !rematchTriggered
+    ) {
+      rematchTriggered = true
+      dealRoom({ roomId: get().roomId, hostUid: room.meta.hostUid, guestUid: room.meta.guestUid, isRematch: true }).catch(
+        (err) => {
+          rematchTriggered = false
+          set({ statsNote: err.message })
+        },
+      )
+    }
 
     // Both display names come from the room itself, which is the only
     // copy both devices agree on. Taking our own name from here too
@@ -348,14 +448,25 @@ export const useOnlineGameStore = create((set, get) => ({
     // Auto-deal: the initial 5 cards land one per column, no player
     // choice (mirrors src/game/engine.js's initGame) — self-write, so
     // this doesn't wait on the host or any particular room status beyond
-    // having our own private hand to deal from.
-    const myPublicBoard = normalizeBoard(room?.players?.[myUid]?.board)
-    const alreadyDealt = totalPlaced(myPublicBoard) > 0
-    if (priv?.initialHand && !alreadyDealt && !initialBoardTriggered) {
+    // having our own private hand to deal from. Gated on status ===
+    // 'dealing' + initialBoardTriggered (reset by _onRoomChange the
+    // instant status turns 'dealing') rather than "is my board already
+    // non-empty": on a rematch, a fresh private hand can arrive while
+    // this player's board still holds all 25 cards from the game that
+    // just finished, which would otherwise look identical to "already
+    // dealt this round" and skip the new deal entirely. resetForNewRound
+    // is awaited before publishing the new row 0 so the two writes can
+    // never land out of order relative to each other — see dealRoom's
+    // doc comment for why the host can't do this reset on this player's
+    // behalf. A harmless no-op against an already-empty board on this
+    // room's very first deal.
+    if (priv?.initialHand && room?.meta?.status === 'dealing' && !initialBoardTriggered) {
       initialBoardTriggered = true
-      publishInitialBoard(roomId, myUid, priv.initialHand).catch(() => {
-        initialBoardTriggered = false
-      })
+      resetForNewRound({ roomId, uid: myUid })
+        .then(() => publishInitialBoard(roomId, myUid, priv.initialHand))
+        .catch(() => {
+          initialBoardTriggered = false
+        })
     }
   },
 
@@ -426,6 +537,15 @@ export const useOnlineGameStore = create((set, get) => ({
     await chooseSwapOnline({ roomId, uid: myUid, col, swapCard: myPrivate.swapCard, bothLocked })
   },
 
+  // Self-write only — see _onRoomChange for what actually starts the new
+  // game once both players' rematchReady come back true, and dealRoom's
+  // doc comment for why that has to be the host's client specifically.
+  async requestRematch() {
+    const { room, roomId, myUid } = get()
+    if (!room || room.meta.status !== 'complete' || room.players?.[myUid]?.rematchReady) return
+    await writeRematchReady({ roomId, uid: myUid })
+  },
+
   _maybeFinalizeShowdown() {
     const { room, myUid, opponentUid, myBoard, opponentBoard, isHost, roomId, myName } = get()
     if (!room || !opponentBoard || completeHandled) return
@@ -471,6 +591,9 @@ export const useOnlineGameStore = create((set, get) => ({
     if (privateUnsub) privateUnsub()
     if (opponentPrivateUnsub) opponentPrivateUnsub()
     metaUnsub = playersUnsub = privateUnsub = opponentPrivateUnsub = null
+    if (turnTimeoutHandle) clearTimeout(turnTimeoutHandle)
+    turnTimeoutHandle = null
+    scheduledTurnKey = null
     set(initialState)
   },
 }))

@@ -25,6 +25,10 @@
             ".write": "auth != null && (!data.exists() || data.val() === auth.uid || root.child('rooms').child($roomId).child('meta/hostUid').val() === auth.uid || root.child('rooms').child($roomId).child('meta/guestUid').val() === auth.uid)",
             ".validate": "newData.isString() && (newData.val() === root.child('rooms').child($roomId).child('meta/hostUid').val() || newData.val() === root.child('rooms').child($roomId).child('meta/guestUid').val())"
           },
+          "turnStartedAt": {
+            ".write": "auth != null && (root.child('rooms').child($roomId).child('meta/hostUid').val() === auth.uid || root.child('rooms').child($roomId).child('meta/guestUid').val() === auth.uid)",
+            ".validate": "newData.val() === now"
+          },
           "firstPlayerUid": {
             ".write": "auth != null && !data.exists() && (root.child('rooms').child($roomId).child('meta/hostUid').val() === auth.uid || root.child('rooms').child($roomId).child('meta/guestUid').val() === auth.uid)",
             ".validate": "newData.val() === root.child('rooms').child($roomId).child('meta/hostUid').val() || newData.val() === root.child('rooms').child($roomId).child('meta/guestUid').val()"
@@ -64,6 +68,7 @@
             "connected": { ".validate": "newData.isBoolean()" },
             "locked": { ".validate": "newData.isBoolean()" },
             "swapUsed": { ".validate": "newData.isBoolean()" },
+            "rematchReady": { ".validate": "newData.isBoolean()" },
 
             "initialHandRank": {
               "category": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9" },

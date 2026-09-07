@@ -26,6 +26,10 @@ export default function ShowdownModal({
   statsNote,
   onClose,
   onPlayAgain,
+  isOnline = false,
+  myRematchReady = false,
+  opponentRematchReady = false,
+  onRematch,
 }) {
   if (!result) return null
 
@@ -100,10 +104,28 @@ export default function ShowdownModal({
           </p>
         )}
 
+        {/* Online only: a rematch needs both players to ask for one — see
+            useOnlineGameStore.js's requestRematch/_onRoomChange. Clicking
+            just marks this player's own "yes"; the room only actually
+            re-deals once the opponent's matching click lands too, at
+            which point this whole modal disappears on its own (status
+            leaves 'complete') with nothing else for either player to do. */}
+        {isOnline && myRematchReady && !opponentRematchReady && (
+          <p className="mt-3 text-center text-xs text-white/50">
+            Waiting for {opponentName} to want a rematch too…
+          </p>
+        )}
+
         <div className="mt-5 flex gap-3">
-          <button type="button" onClick={onPlayAgain} className="btn-gold flex-1">
-            Play Again
-          </button>
+          {isOnline ? (
+            <button type="button" onClick={onRematch} disabled={myRematchReady} className="btn-gold flex-1">
+              {myRematchReady ? 'Waiting…' : 'Rematch'}
+            </button>
+          ) : (
+            <button type="button" onClick={onPlayAgain} className="btn-gold flex-1">
+              Play Again
+            </button>
+          )}
           <button type="button" onClick={onClose} className="btn-ghost flex-1">
             Exit
           </button>

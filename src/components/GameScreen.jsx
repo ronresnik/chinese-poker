@@ -31,6 +31,10 @@ export default function GameScreen({
   opponentBoard,
   isMyTurn,
   cashGame,
+  // Online-only: epoch ms when the current placement turn times out.
+  // LocalGame.jsx never passes this, so TurnBanner shows no countdown
+  // for vs-computer — the per-turn timer is an online-games feature only.
+  turnDeadlineMs = null,
   nextCard,
   onPlaceCard,
   swapCard,
@@ -41,6 +45,10 @@ export default function GameScreen({
   result,
   statsNote,
   onPlayAgain,
+  isOnline = false,
+  myRematchReady = false,
+  opponentRematchReady = false,
+  onRematch,
   onExit,
 }) {
   const isPlacing = status === 'placing'
@@ -112,7 +120,13 @@ export default function GameScreen({
 
       <PlayerBoard board={displayOpponentBoard} />
 
-      <TurnBanner status={status} isMyTurn={isMyTurn} myLocked={myLocked} opponentLocked={opponentLocked} />
+      <TurnBanner
+        status={status}
+        isMyTurn={isMyTurn}
+        myLocked={myLocked}
+        opponentLocked={opponentLocked}
+        turnDeadlineMs={turnDeadlineMs}
+      />
 
       {coachTip && <CoachTipToast tip={coachTip} />}
 
@@ -183,6 +197,10 @@ export default function GameScreen({
           cashGame={cashGame}
           statsNote={statsNote}
           onPlayAgain={onPlayAgain}
+          isOnline={isOnline}
+          myRematchReady={myRematchReady}
+          opponentRematchReady={opponentRematchReady}
+          onRematch={onRematch}
           onClose={onExit}
         />
       )}

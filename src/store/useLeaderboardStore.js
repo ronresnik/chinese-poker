@@ -10,6 +10,7 @@ import {
   runTransaction,
   serverTimestamp,
   setDoc,
+  where,
 } from 'firebase/firestore'
 import { db } from '../firebase/config.js'
 
@@ -98,6 +99,35 @@ export async function ensureUserProfile(uid, displayName) {
   }
   await setDoc(ref, profile)
   return profile
+}
+
+// Best-effort, not server-enforced: firestore.rules doesn't gate this
+// (deliberately — a real unique-username constraint needs its own
+// collection with a create-only-if-absent rule, which is a Firestore
+// rules change; this app's `users` collection is already publicly
+// readable and self-writable exactly as it always has been, so adding
+// Google sign-in didn't need one). A malicious client could still write
+// any displayName it wants; what this actually guarantees is that the
+// normal signup flow (claimUsername below) won't hand two honest players
+// the same name by accident.
+export async function isDisplayNameTaken(name, excludeUid) {
+  const q = query(collection(db, 'users'), where('displayName', '==', name), fsLimit(2))
+  const snap = await getDocs(q)
+  return snap.docs.some((d) => d.id !== excludeUid)
+}
+
+// Called once, the first time a Google-linked account needs a username —
+// see Home.jsx. Existing profiles (a returning Google sign-in, or an
+// anonymous session that already played and already has a name) never
+// reach this: ensureUserProfile's own "already exists, leave it alone"
+// rule is what actually makes a chosen name permanent going forward.
+export async function claimUsername(uid, name) {
+  const trimmed = name.trim()
+  if (!trimmed) throw new Error('Choose a username first.')
+  if (await isDisplayNameTaken(trimmed, uid)) {
+    throw new Error(`"${trimmed}" is already taken — try another.`)
+  }
+  return ensureUserProfile(uid, trimmed)
 }
 
 // Firestore's own permission-denied message is the same generic string

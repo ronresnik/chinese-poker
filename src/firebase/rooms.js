@@ -240,8 +240,23 @@ export async function joinRoom({ roomId, guestUid, guestName, facts = {} }) {
  * own `players/{uid}/initialHandRank` once it can read its own private
  * hand (self-write, no rule exception needed) — see publishInitialHandRank
  * below and useOnlineGameStore.js.
+ *
+ * `isRematch` reuses this same room instead of requiring a fresh one for
+ * a second game against the same opponent (see requestRematch below).
+ * Only meta/private are touched here either way — clearing the leftover
+ * board/locked/swapUsed/rematchReady from the finished game is each
+ * client's own job (see useOnlineGameStore.js's _onRoomChange reacting to
+ * status turning 'dealing'), since players/{uid}'s rule is self-write
+ * only: the host has no way to reset the guest's own fields for them,
+ * the same reason it never wrote the guest's board during placement
+ * either. meta/firstPlayerUid is skipped on a rematch — its rule only
+ * ever allows writing it once, and RTDB's multi-path update() is
+ * all-or-nothing, so including a value it will reject would fail the
+ * entire status→placing write, not just that one field. Nothing reads it
+ * back client-side, so leaving it at whatever the very first game set
+ * has no effect on anything.
  */
-export async function dealRoom({ roomId, hostUid, guestUid }) {
+export async function dealRoom({ roomId, hostUid, guestUid, isRematch = false }) {
   const { plan } = buildDealPlan(hostUid, guestUid)
   const facts = { roomId, myUid: hostUid, hostUid, guestUid }
 
@@ -272,7 +287,8 @@ export async function dealRoom({ roomId, hostUid, guestUid }) {
     update(ref(rtdb), {
       [`rooms/${roomId}/meta/status`]: 'placing',
       [`rooms/${roomId}/meta/turnUid`]: firstPlayerUid,
-      [`rooms/${roomId}/meta/firstPlayerUid`]: firstPlayerUid,
+      [`rooms/${roomId}/meta/turnStartedAt`]: serverTimestamp(),
+      ...(isRematch ? {} : { [`rooms/${roomId}/meta/firstPlayerUid`]: firstPlayerUid }),
       [`rooms/${roomId}/meta/updatedAt`]: serverTimestamp(),
     }),
   )
@@ -286,6 +302,35 @@ export async function dealRoom({ roomId, hostUid, guestUid }) {
   // Best-effort bookkeeping (docs/firebase-schema.md's duplicate-card
   // guard) — a failure here must never block the game from starting.
   update(ref(rtdb), cardUpdates).catch(() => {})
+}
+
+/**
+ * One player's own "yes" to a rematch — self-write, so either player can
+ * call this regardless of who's host. Once useOnlineGameStore.js's
+ * _onRoomChange sees both players/{uid}/rematchReady true, the host's
+ * client calls dealRoom({..., isRematch: true}); nothing else here
+ * drives that, so declining just means never clicking it.
+ */
+export async function requestRematch({ roomId, uid }) {
+  await update(ref(rtdb), { [`rooms/${roomId}/players/${uid}/rematchReady`]: true })
+}
+
+/**
+ * Self-write: clears this one player's own leftover board/locked/
+ * swapUsed/rematchReady from the game that just finished. Called by
+ * EVERY client (see useOnlineGameStore.js) the moment meta/status turns
+ * 'dealing' — including the very first deal, where this is just a no-op
+ * against already-empty fields, so the two cases don't need separate
+ * code paths. Only ever touches the caller's own uid: see dealRoom's doc
+ * comment for why a rematch reset can't be done any other way.
+ */
+export async function resetForNewRound({ roomId, uid }) {
+  await update(ref(rtdb), {
+    [`rooms/${roomId}/players/${uid}/board`]: null,
+    [`rooms/${roomId}/players/${uid}/locked`]: false,
+    [`rooms/${roomId}/players/${uid}/swapUsed`]: false,
+    [`rooms/${roomId}/players/${uid}/rematchReady`]: false,
+  })
 }
 
 function compareCategoryThenTiebreak(a, b) {
@@ -355,6 +400,10 @@ export async function placeCardOnline({ roomId, uid, opponentTurnUid, col, card,
   // schema wouldn't accept (its .validate requires a real member uid).
   if (!bothBoardsFull) {
     updates[`rooms/${roomId}/meta/turnUid`] = opponentTurnUid
+    // Restarts the 30s per-turn countdown the instant the handoff itself
+    // lands (see useOnlineGameStore.js) — written in the same atomic
+    // update as turnUid so the two can never observably drift apart.
+    updates[`rooms/${roomId}/meta/turnStartedAt`] = serverTimestamp()
   }
 
   await guarded('place', `rooms/${roomId}/players/${uid}/board/${col}/${nextIndex}`, { roomId, myUid: uid }, () =>

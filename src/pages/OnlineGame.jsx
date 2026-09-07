@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
-import { useOnlineGameStore } from '../store/useOnlineGameStore.js'
+import { useOnlineGameStore, TURN_DURATION_MS } from '../store/useOnlineGameStore.js'
 import { useAuthStore } from '../store/useAuthStore.js'
 import { closeLobbyEntry } from '../firebase/rooms.js'
 import GameScreen from '../components/GameScreen.jsx'
@@ -158,6 +158,12 @@ export default function OnlineGame() {
   const isMyTurn = store.status === 'placing' && store.turnUid === store.myUid
   const opponentName = store.room?.players?.[store.opponentUid]?.displayName ?? 'Opponent'
   const opponentConnected = store.room?.players?.[store.opponentUid]?.connected ?? true
+  // Both players see the same deadline for whoever's turn it is — not
+  // just the active player — so a waiting player can see the countdown
+  // running out on their opponent too, the same way TurnBanner already
+  // shows "Opponent's turn…" to them.
+  const turnDeadlineMs =
+    store.status === 'placing' && store.turnStartedAt ? store.turnStartedAt + TURN_DURATION_MS : null
 
   return (
     <GameScreen
@@ -170,6 +176,7 @@ export default function OnlineGame() {
       opponentBoard={store.opponentBoard}
       isMyTurn={isMyTurn}
       cashGame={store.cashGame}
+      turnDeadlineMs={turnDeadlineMs}
       nextCard={isMyTurn ? store.nextCardToPlace() : null}
       onPlaceCard={store.place}
       swapCard={store.myPrivate?.swapCard}
@@ -179,10 +186,10 @@ export default function OnlineGame() {
       coachTip={store.lastCoachTip}
       result={store.result}
       statsNote={store.statsNote}
-      onPlayAgain={() => {
-        store.leave()
-        navigate('/')
-      }}
+      isOnline
+      myRematchReady={store.myRematchReady}
+      opponentRematchReady={store.opponentRematchReady}
+      onRematch={store.requestRematch}
       onExit={() => {
         store.leave()
         navigate('/')

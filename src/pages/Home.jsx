@@ -6,6 +6,7 @@ import { sanitizeRoomCode, ROOM_CODE_LENGTH } from '../firebase/roomEntry.js'
 import { subscribeOpenRooms } from '../firebase/rooms.js'
 import { formatCurrency } from '../utils/format.js'
 import ErrorReport from '../components/ErrorReport.jsx'
+import { APP_VERSION } from '../version.js'
 
 const CURRENCIES = ['USD', 'NIS', 'EUR', 'GBP']
 
@@ -148,6 +149,8 @@ export default function Home() {
             Continue
           </button>
         </form>
+
+        <p className="text-center text-[10px] text-white/20">{APP_VERSION}</p>
       </div>
     )
   }
@@ -328,6 +331,8 @@ export default function Home() {
           )}
         </div>
       </div>
+
+      <p className="text-center text-[10px] text-white/20">{APP_VERSION}</p>
     </div>
   )
 }
